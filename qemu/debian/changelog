@@ -1,7 +1,0 @@
-beanjar-qemu (10.0.2+beanjar1) trixie; urgency=medium
-
-  * QEMU 10.0.2 with Beanjar's four patches: a surfaceless EGL display,
-    egl_fb_read_rect() fixes, D-Bus read-back of GL scanouts, and dropping
-    a D-Bus listener whose connection closed.
-
- -- Mariotaku <git@mariotaku.me>  Tue, 10 Nov 2026 15:00:00 +0000

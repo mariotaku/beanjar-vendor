@@ -1,0 +1,20 @@
+QEMU, as built by beanjar-vendor (qemu/)
+
+These programs are QEMU's release named in BUILDINFO, built from the upstream release tarball
+(https://download.qemu.org/) with the patches in beanjar-vendor's qemu/patches/ applied, by the
+build script next to them.
+
+QEMU as a whole is licensed under the GNU General Public License, version 2 (COPYING); some of
+its parts are under other compatible licences, as LICENSE explains, and the GNU Lesser General
+Public License text that some of them use is COPYING.LIB. Copyright Fabrice Bellard and the QEMU
+contributors.
+
+The patches and the build script are licensed under the GNU General Public License, version 2 or
+(at your option) any later version. Copyright Mariotaku <git@mariotaku.me> and the Beanjar
+contributors.
+
+The firmware images and other data in share/qemu are QEMU's pc-bios files, each under its own
+licence as listed in QEMU's pc-bios/README, installed here as pc-bios-README.
+
+The corresponding source is the QEMU release tarball, published with each release of these
+programs, and beanjar-vendor's qemu/ directory at the release's tag.

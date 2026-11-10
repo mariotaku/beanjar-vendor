@@ -1,25 +1,19 @@
-# qemu: beanjar-qemu
+# qemu: QEMU with Beanjar's display patches
 
-The patched QEMU that [Beanjar](https://github.com/mariotaku/beanjar) runs its VMs with, packaged
-as `beanjar-qemu` for Debian 13 (trixie) on amd64 and arm64.
-
-Beanjar's launcher runs `/usr/libexec/beanjar/qemu-system-aarch64` (with `-L
-/usr/share/beanjar/qemu`) whenever this package is installed, and Debian's `qemu-system-arm` with
-`qemu-system-modules-opengl` otherwise; the `beanjar` package depends on one or the other. The
-package installs nothing outside those Beanjar directories, so it lives alongside Debian's QEMU.
-
-| Path | |
-|---|---|
-| `/usr/libexec/beanjar/qemu-system-aarch64` | the emulator, stripped |
-| `/usr/libexec/beanjar/vhost-user-gpu` | QEMU's own vhost-user GPU backend: on an ARM host with a render node the launcher runs the VM's virgl GPU in this separate process |
-| `/usr/share/beanjar/qemu/` | QEMU's data directory (firmware images, keymaps) |
+The patched QEMU that [Beanjar](https://github.com/mariotaku/beanjar) runs its VMs with, built for
+Debian 13 (trixie) on amd64 and arm64. The result is a tarball of the installed programs and data,
+not a package: Beanjar's own packaging turns it into the `beanjar-qemu` package, which installs
+the two programs in `/usr/libexec/beanjar` and the data directory as `/usr/share/beanjar/qemu`,
+alongside Debian's QEMU. Beanjar's launcher runs that QEMU (with `-L /usr/share/beanjar/qemu`)
+whenever it is installed, and Debian's `qemu-system-arm` with `qemu-system-modules-opengl`
+otherwise.
 
 ## Version
 
-`<QEMU version>+beanjar<N>`, for example `10.0.2+beanjar1`: the upstream QEMU release, and the
-revision of this repository's patches and build for it. `debian/changelog` holds it; its upstream
-part selects the release tarball, which `build.sh` downloads from `download.qemu.org` and checks
-against `qemu.sha256`.
+`<QEMU version>+beanjar<N>`, for example `10.0.2+beanjar1`, in `VERSION`: the upstream QEMU
+release, and the revision of this directory's patches and build for it. Its upstream part selects
+the release tarball, which `build.sh` downloads from `download.qemu.org` and checks against
+`qemu.sha256`.
 
 ## Patches
 
@@ -45,12 +39,25 @@ drivers, and no block drivers or crypto libraries beyond QEMU's built-in ones. T
 Debian 13's, among them virglrenderer 1.1, libslirp and libfdt. `build.sh` lists the configure
 options.
 
-The package is assembled with Debian's low-level tools rather than `dpkg-buildpackage`: QEMU is
-built from the upstream tarball, fetched at build time, and only a staged tree is packaged under
-Beanjar's paths, so there is no Debian source package to build. `dpkg-shlibdeps` derives the
-library dependencies of the two programs, `dpkg-gencontrol` writes the control file from
-`debian/control` and `debian/changelog`, and `dpkg-deb` builds the `.deb`. Besides the libraries
-it depends on `libegl1` and `libopengl0`, which libepoxy loads at run time where
+## The tarball
+
+`qemu-<version>-<arch>.tar.xz`, for example `qemu-10.0.2+beanjar1-amd64.tar.xz`. Its root has the
+layout of QEMU's installed prefix, reduced to what Beanjar uses:
+
+| Path | |
+|---|---|
+| `bin/qemu-system-aarch64` | the emulator, stripped |
+| `libexec/vhost-user-gpu` | QEMU's own vhost-user GPU backend, stripped: on an ARM host with a render node the launcher runs the VM's virgl GPU in this separate process |
+| `share/qemu/` | QEMU's data directory (firmware images, keymaps), without `vhost-user/50-qemu-gpu.json`, which names the configure prefix rather than where the backend is installed |
+| `share/doc/qemu/` | QEMU's `COPYING`, `COPYING.LIB` and `LICENSE`, its `pc-bios/README` (the firmware images' licences) as `pc-bios-README`, and `NOTICE` |
+| `BUILDINFO` | program, version, architecture, Debian release, the configure prefix, the source and patch checksums, the configure line, and `Depends` |
+
+The configure prefix is `/qemu`, which nothing uses at run time: QEMU finds its data directory
+relative to its program, and Beanjar's launcher passes `-L` anyway. So the tree runs wherever it is
+unpacked, for example `bin/qemu-system-aarch64 -L share/qemu`.
+
+`BUILDINFO` is in Debian control syntax. Its `Depends` is what `dpkg-shlibdeps` reports for the two
+programs, plus `libegl1` and `libopengl0`, which libepoxy loads at run time where
 `dpkg-shlibdeps` cannot see them.
 
 ## Building
@@ -63,20 +70,32 @@ top of a clone:
 docker run --rm -v "$PWD:/src:ro" -v "$PWD/build:/out" debian:trixie /src/qemu/build.sh /out/qemu
 ```
 
-The package is written to `build/qemu/debs/beanjar-qemu_<version>_<arch>.deb`; install it with
-`sudo apt install ./build/qemu/debs/beanjar-qemu_*.deb`. A build takes about three minutes on 24
-cores, dependencies included.
+The tarball is written to `build/qemu/qemu-<version>-<arch>.tar.xz`, next to a copy of the
+upstream release tarball, `build/qemu/qemu-<upstream version>.tar.xz`, which is the source the
+programs are built from with the patches here. `build.sh` ends by running `qemu/test-tarball.sh`
+on the tarball: it unpacks it in another directory and, with `-L` pointing into that tree, checks
+that `qemu-system-aarch64 --version` is the expected release, that `-display help` lists
+`egl-headless` and `dbus` and `-device help` lists `virtio-gpu-gl-pci`, `vhost-user-gpu-pci` and
+`usb-redir`, and that `vhost-user-gpu --print-capabilities` answers. A build takes about two
+minutes on 24 cores, dependencies included.
 
-## Continuous integration
+## Continuous integration and releases
 
 The QEMU workflow (`.github/workflows/qemu.yml`) runs `qemu/build.sh` in a `debian:trixie`
-container on GitHub's amd64 and arm64 runners, for pushes and pull requests that change `qemu/` or
-the workflow; those runs only check that the package builds. A manual run (Actions, QEMU, "Run
-workflow") also uploads the packages as the run's artifacts `beanjar-qemu-amd64` and
-`beanjar-qemu-arm64`.
+container on GitHub's amd64 and arm64 runners, natively on each, tests included. Pushes and pull
+requests that change `qemu/` or the workflow only check that it builds. A manual run (Actions,
+QEMU, "Run workflow") also uploads the tarballs as the run's artifacts `beanjar-qemu-amd64` and
+`beanjar-qemu-arm64`, and the upstream source as `beanjar-qemu-source`.
+
+To release, push a tag `qemu-<version>` matching `VERSION`, for example `qemu-10.0.2+beanjar1`; a
+tag that does not match fails the build. The workflow builds both architectures and publishes a
+GitHub release named after the tag with the two tarballs, the upstream QEMU tarball and a
+`SHA256SUMS` file; the patches are in the tag's source archive.
 
 ## Licence
 
-QEMU is licensed under the GNU General Public License, version 2. The patches and the build
-scripts here are GPL-2.0-or-later (the repository's `LICENSE`); every file carries an SPDX header
-or is covered by the repository's `REUSE.toml`.
+QEMU is licensed under the GNU General Public License, version 2; some of its parts are under
+other compatible licences, and the firmware images in `share/qemu` each under their own, as the
+texts in `share/doc/qemu` say. The patches and the build scripts here are GPL-2.0-or-later (the
+repository's `LICENSE`); every file carries an SPDX header or is covered by the repository's
+`REUSE.toml`.

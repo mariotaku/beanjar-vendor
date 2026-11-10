@@ -3,14 +3,15 @@ SPDX-PackageName = "beanjar-vendor"
 SPDX-PackageDownloadLocation = "https://github.com/mariotaku/beanjar-vendor"
 
 # Build scripts and workflows carry their own SPDX header. The entries below cover what cannot:
-# documentation, Debian control data, source checksums and patches, which carry the licence
+# documentation, versions, notices, source checksums and patches, which carry the licence
 # Beanjar gives them.
 [[annotations]]
 path = [
   "**.md",
   ".gitignore",
+  "qemu/VERSION",
   "qemu/qemu.sha256",
-  "qemu/debian/**",
+  "qemu/NOTICE",
   "qemu/patches/**.patch",
   "neatvnc/VERSION",
   "neatvnc/neatvnc.sha256",
