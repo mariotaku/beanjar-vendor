@@ -9,6 +9,7 @@ uploads the `.deb` files as the run's artifacts.
 | Directory | Package | Workflow |
 |---|---|---|
 | [`qemu/`](qemu/README.md) | `beanjar-qemu`: QEMU with Beanjar's EGL and D-Bus display patches | `.github/workflows/qemu.yml` |
+| [`neatvnc/`](neatvnc/README.md) | `neatvnc-<version>-<arch>.tar.xz`: neatvnc 1.0.4 with V4L2 H.264 fixes, and aml 1.0, for `beanjar-vnc` | `.github/workflows/neatvnc.yml` |
 
 The patches and build scripts are GPL-2.0-or-later (`LICENSE`); every file carries an SPDX header
 or is covered by `REUSE.toml`. Each program keeps its own upstream licence.

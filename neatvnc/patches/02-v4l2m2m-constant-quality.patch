@@ -1,0 +1,29 @@
+Description: v4l2m2m: map the quality to V4L2_CID_MPEG_VIDEO_CONSTANT_QUALITY's range
+ open-h264.c passes a QP-like value (1 best, 51 worst); the V4L2 control runs
+ from 1 (lowest) to 100 (highest quality). Map it as 100 - (q - 1) * 99 / 50.
+ Hold the QP at 18 or better: a client's default level (noVNC: 3, QP 34) is
+ chosen for a small JPEG and leaves vertical streaks in flat H.264 areas.
+Author: Mariotaku <git@mariotaku.me>
+Forwarded: no
+Last-Update: 2026-11-09
+---
+--- a/src/enc/h264/v4l2m2m-impl.c
++++ b/src/enc/h264/v4l2m2m-impl.c
+@@ -539,8 +539,16 @@
+ 	ctrl.value = V4L2_MPEG_VIDEO_BITRATE_MODE_CQ;
+ 	ioctl(self->fd, VIDIOC_S_CTRL, &ctrl);
+ 
++	/*
++	 * open-h264.c passes a QP-like value (1 best .. 51 worst); the V4L2
++	 * control is 1 (lowest) .. 100 (highest quality). Clients ask for a
++	 * low level to make their JPEG smaller (noVNC defaults to 3 here);
++	 * H.264 at that level (QP 34) streaks in flat areas, so it is held at
++	 * QP 18 (the client's level 6) and never made coarser.
++	 */
++	int qp = self->quality < 18 ? self->quality : 18;
+ 	ctrl.id = V4L2_CID_MPEG_VIDEO_CONSTANT_QUALITY;
+-	ctrl.value = self->quality;
++	ctrl.value = 100 - (qp - 1) * 99 / 50;
+ 	ioctl(self->fd, VIDIOC_S_CTRL, &ctrl);
+ }
+ 

@@ -1,0 +1,21 @@
+Description: v4l2m2m: try the DRM fourcc itself as the V4L2 format
+ DRM and V4L2 share fourcc codes for the same memory layout (DRM XRGB8888 'XR24'
+ is V4L2 XBGR32, bytes B, G, R, X). The name-based table maps XRGB8888 to V4L2
+ XRGB32 ('BX24', bytes X, R, G, B), so a driver that follows the specification
+ swaps red and blue. Try the identical fourcc first.
+Author: Mariotaku <git@mariotaku.me>
+Forwarded: no
+Last-Update: 2026-11-09
+---
+--- a/src/enc/h264/v4l2m2m-impl.c
++++ b/src/enc/h264/v4l2m2m-impl.c
+@@ -165,6 +165,9 @@
+ 	if (have_v4l2_format(formats, n_formats, f)) \
+ 		return f
+ 
++	/* DRM and V4L2 share fourcc codes for the same memory layout. */
++	TRY_FORMAT(drm_format);
++
+ 	switch (drm_format) {
+ 	case DRM_FORMAT_RGBX8888:
+ 	case DRM_FORMAT_RGBA8888:

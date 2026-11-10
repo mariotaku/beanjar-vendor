@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Build the neatvnc tarball (neatvnc 1.0 and aml 1.0 under /usr/lib/beanjar/neatvnc) for amd64 and
+# arm64, each natively in a debian:trixie container, with neatvnc/build.sh. Pushes and pull
+# requests that touch neatvnc/ or this workflow only check that it builds; a manual run uploads
+# the tarballs as workflow artifacts. Pushing a tag neatvnc-<version>, where <version> is
+# neatvnc/VERSION, builds both and publishes them as a GitHub release with a SHA256SUMS file.
+name: neatvnc
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "neatvnc-*"
+    paths:
+      - "neatvnc/**"
+      - ".github/workflows/neatvnc.yml"
+  pull_request:
+    paths:
+      - "neatvnc/**"
+      - ".github/workflows/neatvnc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neatvnc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  neatvnc:
+    name: neatvnc (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the tag
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cat neatvnc/VERSION)
+          if [ "$TAG" != "neatvnc-$version" ]; then
+            echo "tag $TAG does not match neatvnc/VERSION ($version)" >&2
+            exit 1
+          fi
+      - name: Build
+        run: sh neatvnc/build.sh "$GITHUB_WORKSPACE/build/neatvnc"
+      - name: Upload
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-neatvnc-${{ matrix.arch }}
+          path: build/neatvnc/neatvnc-*.tar.xz
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: github.ref_type == 'tag'
+    needs: neatvnc
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: beanjar-neatvnc-*
+          path: dist
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          set -- neatvnc-*.tar.xz
+          [ $# = 2 ] || { ls -l; exit 1; }
+          sha256sum neatvnc-*.tar.xz > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+            --notes "neatvnc and aml for Debian 13 (amd64, arm64), built by neatvnc/build.sh; see neatvnc/README.md." \
+            neatvnc-*.tar.xz SHA256SUMS

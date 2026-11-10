@@ -12,7 +12,17 @@ path = [
   "qemu/qemu.sha256",
   "qemu/debian/**",
   "qemu/patches/**.patch",
+  "neatvnc/VERSION",
+  "neatvnc/neatvnc.sha256",
+  "neatvnc/NOTICE",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"
 SPDX-License-Identifier = "GPL-2.0-or-later"
+
+# The neatvnc patches change neatvnc's ISC-licensed code and carry its licence.
+[[annotations]]
+path = "neatvnc/patches/**.patch"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"
+SPDX-License-Identifier = "ISC"
