@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Mon, 26 Oct 2026 16:10:00 +0900
+Subject: [PATCH 4/4] ui/dbus: drop a listener when its connection closes
+
+A listener whose connection closed was never freed: the connection's
+message filter holds a reference on it that is only dropped when the
+filter is removed, which nothing did, and ddl_scanout() passed a
+reference as the user data of a call without a callback, so it leaked
+one per scanout. The listener's DisplayChangeListener therefore stayed
+registered and every frame was sent to the closed connection. With the
+GL readback's UpdateMap that logged "Failed to call update: The
+connection is closed" per frame and listener, indefinitely.
+
+When the connection closes, unregister the DisplayChangeListener and
+remove the filter. Pass no reference to the Scanout call. Do not report
+a call that failed because the connection closed: that is the listener
+going away.
+---
+diff --git a/ui/dbus-listener.c b/ui/dbus-listener.c
+index cd58ec9..e80ac21 100644
+--- a/ui/dbus-listener.c
++++ b/ui/dbus-listener.c
+@@ -102,6 +102,7 @@ struct _DBusDisplayListener {
+ #endif
+ 
+     guint dbus_filter;
++    gulong closed_handler;
+     guint32 display_serial_to_discard;
+     guint32 cursor_serial_to_discard;
+ };
+@@ -259,7 +260,8 @@ static void dbus_update_gl_cb(GObject *source_object,
+     d3d_texture2d_acquire0(ddl->d3d_texture, &error_warn);
+ #endif
+ 
+-    if (!success) {
++    /* a closed connection is the listener going away: nothing to report */
++    if (!success && !g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CLOSED)) {
+         error_report("Failed to call update: %s", err->message);
+     }
+ 
+@@ -281,7 +283,8 @@ static void dbus_update_map_cb(GObject *source_object,
+     DBusDisplayListener *ddl = user_data;
+ 
+     if (!qemu_dbus_display1_listener_unix_map_call_update_map_finish(
+-            ddl->map_proxy, res, &err)) {
++            ddl->map_proxy, res, &err) &&
++        !g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CLOSED)) {
+         error_report("Failed to call update: %s", err->message);
+     }
+ 
+@@ -949,8 +952,7 @@ static void ddl_scanout(DBusDisplayListener *ddl, DisplaySurface *ds)
+     qemu_dbus_display1_listener_call_scanout(
+         ddl->proxy, surface_width(ds), surface_height(ds),
+         surface_stride(ds), surface_format(ds), v_data,
+-        G_DBUS_CALL_FLAGS_NONE, DBUS_DEFAULT_TIMEOUT, NULL, NULL,
+-        g_object_ref(ddl));
++        G_DBUS_CALL_FLAGS_NONE, DBUS_DEFAULT_TIMEOUT, NULL, NULL, NULL);
+ }
+ 
+ static void dbus_gfx_update(DisplayChangeListener *dcl,
+@@ -1091,7 +1093,12 @@ dbus_display_listener_dispose(GObject *object)
+ {
+     DBusDisplayListener *ddl = DBUS_DISPLAY_LISTENER(object);
+ 
+-    unregister_displaychangelistener(&ddl->dcl);
++    if (ddl->dcl.ds) {
++        unregister_displaychangelistener(&ddl->dcl);
++    }
++    if (ddl->closed_handler) {
++        g_clear_signal_handler(&ddl->closed_handler, ddl->conn);
++    }
+     g_clear_object(&ddl->conn);
+     g_clear_pointer(&ddl->bus_name, g_free);
+     g_clear_object(&ddl->proxy);
+@@ -1356,6 +1363,23 @@ dbus_filter(GDBusConnection *connection,
+     return message;
+ }
+ 
++/*
++ * The connection is gone: stop sending to it at once, rather than at the
++ * last unref, and drop the filter, which holds a reference on the listener.
++ */
++static void
++dbus_display_listener_closed(GDBusConnection *conn, gboolean remote_vanished,
++                             GError *error, DBusDisplayListener *ddl)
++{
++    if (ddl->dcl.ds) {
++        unregister_displaychangelistener(&ddl->dcl);
++    }
++    if (ddl->dbus_filter) {
++        g_dbus_connection_remove_filter(conn, ddl->dbus_filter);
++        ddl->dbus_filter = 0;
++    }
++}
++
+ DBusDisplayListener *
+ dbus_display_listener_new(const char *bus_name,
+                           GDBusConnection *conn,
+@@ -1393,6 +1417,8 @@ dbus_display_listener_new(const char *bus_name,
+     assert(con);
+     ddl->dcl.con = con;
+     register_displaychangelistener(&ddl->dcl);
++    ddl->closed_handler = g_signal_connect(
++        conn, "closed", G_CALLBACK(dbus_display_listener_closed), ddl);
+ 
+     return ddl;
+ }

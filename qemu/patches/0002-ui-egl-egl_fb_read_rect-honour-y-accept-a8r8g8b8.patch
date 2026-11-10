@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 27 Sep 2026 00:26:42 +0900
+Subject: [PATCH 2/3] ui/egl: egl_fb_read_rect: honour y, accept a8r8g8b8
+
+egl_fb_read_rect() read rows y..y+h-1 of the framebuffer but stored them
+from row 0 of the surface, so any rectangle not starting at y = 0 landed
+in the wrong place. Store framebuffer row y in surface row y, as
+egl_fb_read() does for the whole frame.
+
+GL_BGRA reads carry alpha, so also accept a8r8g8b8 destinations for
+callers that want to keep it.
+---
+ ui/egl-helpers.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/ui/egl-helpers.c b/ui/egl-helpers.c
+index 7dcf420b8..cd67d50c3 100644
+--- a/ui/egl-helpers.c
++++ b/ui/egl-helpers.c
+@@ -176,13 +176,16 @@ void egl_fb_read_rect(DisplaySurface *dst, egl_fb *src, int x, int y, int w, int
+ {
+     assert(surface_width(dst) == src->width);
+     assert(surface_height(dst) == src->height);
+-    assert(surface_format(dst) == PIXMAN_x8r8g8b8);
++    /* GL_BGRA reads carry alpha; a8r8g8b8 surfaces keep it */
++    assert(surface_format(dst) == PIXMAN_x8r8g8b8 ||
++           surface_format(dst) == PIXMAN_a8r8g8b8);
+ 
+     glBindFramebuffer(GL_READ_FRAMEBUFFER, src->framebuffer);
+     glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
+     glPixelStorei(GL_PACK_ROW_LENGTH, surface_stride(dst) / 4);
+-    glReadPixels(x, y, w, h,
+-                 GL_BGRA, GL_UNSIGNED_BYTE, surface_data(dst) + x * 4);
++    /* framebuffer row y goes to surface row y, like egl_fb_read() */
++    glReadPixels(x, y, w, h, GL_BGRA, GL_UNSIGNED_BYTE,
++                 surface_data(dst) + y * surface_stride(dst) + x * 4);
+     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+ }
+ 

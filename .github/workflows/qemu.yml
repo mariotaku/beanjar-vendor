@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Build the beanjar-qemu Debian 13 package for amd64 and arm64, each natively in a debian:trixie
+# container, with qemu/build.sh. Pushes and pull requests that touch qemu/ or this workflow only
+# check that it builds; a manual run uploads the .deb files as workflow artifacts.
+name: QEMU
+
+on:
+  push:
+    paths:
+      - "qemu/**"
+      - ".github/workflows/qemu.yml"
+  pull_request:
+    paths:
+      - "qemu/**"
+      - ".github/workflows/qemu.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qemu:
+    name: beanjar-qemu (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        run: sh qemu/build.sh "$GITHUB_WORKSPACE/build/qemu"
+      - name: Upload
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-qemu-${{ matrix.arch }}
+          path: build/qemu/debs/*.deb
+          if-no-files-found: error

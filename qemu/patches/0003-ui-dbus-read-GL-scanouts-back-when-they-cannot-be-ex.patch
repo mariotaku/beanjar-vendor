@@ -1,0 +1,499 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 27 Sep 2026 00:30:47 +0900
+Subject: [PATCH 3/3] ui/dbus: read GL scanouts back when they cannot be
+ exported as dma-bufs
+
+On Linux, a GL scanout reaches D-Bus listeners only as ScanoutDMABUF,
+which needs EGL_MESA_image_dma_buf_export. A surfaceless EGL display on a
+driver that is not behind a render node (Mesa d3d12 on WSL2) has none,
+so dbus,gl=on could not show anything there.
+
+When the display cannot export dma-bufs, read GL scanouts back instead,
+as the Windows SHARE_KIND_MAPPED path does: blit the scanout rectangle
+upright into a framebuffer, glReadPixels the damaged rectangle into a
+shareable (memfd) a8r8g8b8 surface, and send it with
+ScanoutMap/UpdateMap if the listener implements
+org.qemu.Display1.Listener.Unix.Map, or copied into Scanout/Update
+otherwise. The surface keeps the alpha channel. The console stays
+GL-blocked until the listener has handled UpdateMap, like UpdateDMABUF,
+so the next frame is not read into the mapping while it is being used.
+A scanout texture of the same geometry (a page flip) keeps the listener's
+mapping and makes the next update read the whole frame.
+
+Displays that can export dma-bufs are unchanged.
+---
+ ui/dbus-listener.c | 311 +++++++++++++++++++++++++++++++++++++++------
+ ui/trace-events    |   1 +
+ 2 files changed, 271 insertions(+), 41 deletions(-)
+
+diff --git a/ui/dbus-listener.c b/ui/dbus-listener.c
+index 51244c924..cd58ec963 100644
+--- a/ui/dbus-listener.c
++++ b/ui/dbus-listener.c
+@@ -85,6 +85,20 @@ struct _DBusDisplayListener {
+ #endif
+ #else /* !WIN32 */
+     QemuDBusDisplay1ListenerUnixMap *map_proxy;
++#ifdef CONFIG_OPENGL
++    /*
++     * GL scanouts read back into gl_ds, when the EGL display cannot export
++     * them as dma-bufs (dbus_gl_readback()).
++     */
++    egl_fb gl_src_fb;           /* the scanout texture */
++    egl_fb gl_fb;               /* the scanout rectangle, row 0 at the top */
++    uint32_t gl_x, gl_y;        /* the scanout rectangle in the texture */
++    bool gl_y0_top;
++    DisplaySurface *gl_ds;      /* a8r8g8b8, shareable (memfd) */
++    bool gl_sent;               /* the listener has gl_ds (Scanout[Map]) */
++    bool gl_mapped;             /* ... as a shared mapping (ScanoutMap) */
++    bool gl_full;               /* the next update reads the whole frame */
++#endif
+ #endif
+ 
+     guint dbus_filter;
+@@ -114,11 +128,28 @@ static void ddl_discard_cursor_messages(DBusDisplayListener *ddl)
+ }
+ 
+ #ifdef CONFIG_OPENGL
++#ifndef WIN32
++/*
++ * Without dma-buf export (e.g. a surfaceless EGL display on a GL driver
++ * that is not behind a render node), GL scanouts are read back with
++ * glReadPixels and sent like 2D surfaces: shared with ScanoutMap/UpdateMap
++ * if the listener implements org.qemu.Display1.Listener.Unix.Map, otherwise
++ * copied into Scanout/Update messages.
++ */
++static bool dbus_gl_readback(void)
++{
++    return !qemu_egl_has_dmabuf_export();
++}
++#endif
++
+ static void dbus_scanout_disable(DisplayChangeListener *dcl)
+ {
+     DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
+ 
+     ddl_discard_display_messages(ddl);
++#ifndef WIN32
++    ddl->gl_sent = false;
++#endif
+ 
+     qemu_dbus_display1_listener_call_disable(
+         ddl->proxy, G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
+@@ -237,15 +268,114 @@ static void dbus_update_gl_cb(GObject *source_object,
+ }
+ #endif
+ 
++#ifndef WIN32
++static void ddl_scanout(DBusDisplayListener *ddl, DisplaySurface *ds);
++static void dbus_gfx_update_sub(DBusDisplayListener *ddl, DisplaySurface *ds,
++                                int x, int y, int w, int h);
++
++static void dbus_update_map_cb(GObject *source_object,
++                               GAsyncResult *res,
++                               gpointer user_data)
++{
++    g_autoptr(GError) err = NULL;
++    DBusDisplayListener *ddl = user_data;
++
++    if (!qemu_dbus_display1_listener_unix_map_call_update_map_finish(
++            ddl->map_proxy, res, &err)) {
++        error_report("Failed to call update: %s", err->message);
++    }
++
++    graphic_hw_gl_block(ddl->dcl.con, false);
++    g_object_unref(ddl);
++}
++
++/* Read a rectangle of the scanout into gl_ds (surface coordinates). */
++static void dbus_gl_read_rect(DBusDisplayListener *ddl,
++                              int x, int y, int w, int h)
++{
++    int height = surface_height(ddl->gl_ds);
++    int src_y0, src_y1;
++
++    /*
++     * Copy it upright into gl_fb, so that framebuffer rows are surface rows
++     * (as egl-headless does with the whole frame), then read it.
++     */
++    if (ddl->gl_y0_top) {
++        src_y0 = ddl->gl_y + height - y;
++        src_y1 = src_y0 - h;
++    } else {
++        src_y0 = ddl->gl_y + y;
++        src_y1 = src_y0 + h;
++    }
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, ddl->gl_src_fb.framebuffer);
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, ddl->gl_fb.framebuffer);
++    glBlitFramebuffer(ddl->gl_x + x, src_y0, ddl->gl_x + x + w, src_y1,
++                      x, y, x + w, y + h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    egl_fb_read_rect(ddl->gl_ds, &ddl->gl_fb, x, y, w, h);
++}
++
++static void dbus_update_gl_readback(DBusDisplayListener *ddl,
++                                    int x, int y, int w, int h)
++{
++    int width, height;
++
++    if (!ddl->gl_ds || !ddl->gl_sent) {
++        return;
++    }
++    width = surface_width(ddl->gl_ds);
++    height = surface_height(ddl->gl_ds);
++
++    if (ddl->gl_full) {
++        /* a new scanout texture: none of gl_ds is current */
++        x = y = 0;
++        w = width;
++        h = height;
++        ddl->gl_full = false;
++    } else {
++        w = MIN(x + w, width) - MAX(x, 0);
++        h = MIN(y + h, height) - MAX(y, 0);
++        x = MAX(x, 0);
++        y = MAX(y, 0);
++        if (w <= 0 || h <= 0) {
++            return;
++        }
++    }
++
++    trace_dbus_gl_readback(x, y, w, h, ddl->gl_mapped);
++    dbus_gl_read_rect(ddl, x, y, w, h);
++
++    if (ddl->gl_mapped) {
++        /* no new frame is read into the mapping until the listener is done */
++        graphic_hw_gl_block(ddl->dcl.con, true);
++        qemu_dbus_display1_listener_unix_map_call_update_map(
++            ddl->map_proxy,
++            x, y, w, h,
++            G_DBUS_CALL_FLAGS_NONE,
++            DBUS_DEFAULT_TIMEOUT, NULL,
++            dbus_update_map_cb,
++            g_object_ref(ddl));
++    } else if (w == width && h == height) {
++        ddl_scanout(ddl, ddl->gl_ds);
++    } else {
++        dbus_gfx_update_sub(ddl, ddl->gl_ds, x, y, w, h);
++    }
++}
++#endif /* !WIN32 */
++
+ static void dbus_call_update_gl(DisplayChangeListener *dcl,
+                                 int x, int y, int w, int h)
+ {
+-#if defined(CONFIG_GBM) || defined(WIN32)
+     DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
+-#endif
+ 
+     trace_dbus_update_gl(x, y, w, h);
+ 
++#ifndef WIN32
++    if (dbus_gl_readback()) {
++        dbus_update_gl_readback(ddl, x, y, w, h);
++        return;
++    }
++#endif
++
+     glFlush();
+ #ifdef CONFIG_GBM
+     graphic_hw_gl_block(ddl->dcl.con, true);
+@@ -444,22 +574,19 @@ dbus_scanout_share_d3d_texture(
+ }
+ #endif /* CONFIG_OPENGL */
+ #else /* !WIN32 */
+-static bool dbus_scanout_map(DBusDisplayListener *ddl)
++/* Share @ds with the listener (ScanoutMap), if it can map it. */
++static bool ddl_scanout_map(DBusDisplayListener *ddl, DisplaySurface *ds)
+ {
+     g_autoptr(GError) err = NULL;
+     g_autoptr(GUnixFDList) fd_list = NULL;
+ 
+-    if (ddl->ds_share == SHARE_KIND_MAPPED) {
+-        return true;
+-    }
+-
+-    if (!ddl->can_share_map || ddl->ds->share_handle == SHAREABLE_NONE) {
++    if (!ddl->can_share_map || ds->share_handle == SHAREABLE_NONE) {
+         return false;
+     }
+ 
+     ddl_discard_display_messages(ddl);
+     fd_list = g_unix_fd_list_new();
+-    if (g_unix_fd_list_append(fd_list, ddl->ds->share_handle, &err) != 0) {
++    if (g_unix_fd_list_append(fd_list, ds->share_handle, &err) != 0) {
+         g_debug("Failed to setup scanout map fdlist: %s", err->message);
+         ddl->can_share_map = false;
+         return false;
+@@ -468,11 +595,11 @@ static bool dbus_scanout_map(DBusDisplayListener *ddl)
+     if (!qemu_dbus_display1_listener_unix_map_call_scanout_map_sync(
+             ddl->map_proxy,
+             g_variant_new_handle(0),
+-            ddl->ds->share_handle_offset,
+-            surface_width(ddl->ds),
+-            surface_height(ddl->ds),
+-            surface_stride(ddl->ds),
+-            surface_format(ddl->ds),
++            ds->share_handle_offset,
++            surface_width(ds),
++            surface_height(ds),
++            surface_stride(ds),
++            surface_format(ds),
+             G_DBUS_CALL_FLAGS_NONE,
+             DBUS_DEFAULT_TIMEOUT,
+             fd_list,
+@@ -484,25 +611,81 @@ static bool dbus_scanout_map(DBusDisplayListener *ddl)
+         return false;
+     }
+ 
++    return true;
++}
++
++static bool dbus_scanout_map(DBusDisplayListener *ddl)
++{
++    if (ddl->ds_share == SHARE_KIND_MAPPED) {
++        return true;
++    }
++
++    if (!ddl_scanout_map(ddl, ddl->ds)) {
++        return false;
++    }
++
+     ddl->ds_share = SHARE_KIND_MAPPED;
+ 
+     return true;
+ }
+-#endif /* WIN32 */
+ 
+ #ifdef CONFIG_OPENGL
+-static void dbus_scanout_texture(DisplayChangeListener *dcl,
+-                                 uint32_t tex_id,
+-                                 bool backing_y_0_top,
+-                                 uint32_t backing_width,
+-                                 uint32_t backing_height,
+-                                 uint32_t x, uint32_t y,
+-                                 uint32_t w, uint32_t h,
+-                                 void *d3d_tex2d)
++static void dbus_scanout_texture_readback(DBusDisplayListener *ddl,
++                                          uint32_t tex_id,
++                                          bool backing_y_0_top,
++                                          uint32_t backing_width,
++                                          uint32_t backing_height,
++                                          uint32_t x, uint32_t y,
++                                          uint32_t w, uint32_t h)
+ {
+-    trace_dbus_scanout_texture(tex_id, backing_y_0_top,
+-                               backing_width, backing_height, x, y, w, h);
++    egl_fb_setup_for_tex(&ddl->gl_src_fb, backing_width, backing_height,
++                         tex_id, false);
++    ddl->gl_x = x;
++    ddl->gl_y = y;
++    ddl->gl_y0_top = backing_y_0_top;
++
++    if (!ddl->gl_ds ||
++        surface_width(ddl->gl_ds) != w || surface_height(ddl->gl_ds) != h) {
++        g_clear_pointer(&ddl->gl_ds, qemu_free_displaysurface);
++        /* keep the alpha channel: a8r8g8b8, not the usual x8r8g8b8 */
++        ddl->gl_ds = qemu_create_displaysurface_from(w, h, PIXMAN_a8r8g8b8,
++                                                     w * 4, NULL);
++        egl_fb_destroy(&ddl->gl_fb);
++        egl_fb_setup_new_tex(&ddl->gl_fb, w, h);
++        ddl->gl_sent = false;
++    }
++
++    if (ddl->gl_sent) {
++        /*
++         * Same geometry, e.g. a page flip: keep the listener's surface, and
++         * read the whole new frame at the next update, which is usually on
++         * its way (dbus_gl_refresh() catches the case where none comes).
++         */
++        ddl->gl_full = true;
++        return;
++    }
++
++    dbus_gl_read_rect(ddl, 0, 0, w, h);
++    ddl->gl_full = false;
++    ddl->gl_mapped = ddl_scanout_map(ddl, ddl->gl_ds);
++    if (!ddl->gl_mapped) {
++        ddl_scanout(ddl, ddl->gl_ds);
++    }
++    ddl->gl_sent = true;
++}
++#endif /* CONFIG_OPENGL */
++#endif /* WIN32 */
++
++#ifdef CONFIG_OPENGL
+ #ifdef CONFIG_GBM
++static void dbus_scanout_texture_dmabuf(DisplayChangeListener *dcl,
++                                        uint32_t tex_id,
++                                        bool backing_y_0_top,
++                                        uint32_t backing_width,
++                                        uint32_t backing_height,
++                                        uint32_t x, uint32_t y,
++                                        uint32_t w, uint32_t h)
++{
+     g_autoptr(QemuDmaBuf) dmabuf = NULL;
+     int fd;
+     uint32_t stride, fourcc;
+@@ -521,10 +704,36 @@ static void dbus_scanout_texture(DisplayChangeListener *dcl,
+ 
+     dbus_scanout_dmabuf(dcl, dmabuf);
+     qemu_dmabuf_close(dmabuf);
++}
++#endif /* GBM */
++
++static void dbus_scanout_texture(DisplayChangeListener *dcl,
++                                 uint32_t tex_id,
++                                 bool backing_y_0_top,
++                                 uint32_t backing_width,
++                                 uint32_t backing_height,
++                                 uint32_t x, uint32_t y,
++                                 uint32_t w, uint32_t h,
++                                 void *d3d_tex2d)
++{
++    DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
++
++    trace_dbus_scanout_texture(tex_id, backing_y_0_top,
++                               backing_width, backing_height, x, y, w, h);
++#ifndef WIN32
++    if (dbus_gl_readback()) {
++        dbus_scanout_texture_readback(ddl, tex_id, backing_y_0_top,
++                                      backing_width, backing_height,
++                                      x, y, w, h);
++        return;
++    }
++#endif
++#ifdef CONFIG_GBM
++    dbus_scanout_texture_dmabuf(dcl, tex_id, backing_y_0_top,
++                                backing_width, backing_height, x, y, w, h);
+ #endif
+ 
+ #ifdef WIN32
+-    DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
+ 
+     /* there must be a matching gfx_switch before */
+     assert(surface_width(ddl->ds) == w);
+@@ -628,6 +837,19 @@ static void dbus_gl_refresh(DisplayChangeListener *dcl)
+         return;
+     }
+ 
++#ifndef WIN32
++    if (dbus_gl_readback() && ddl->gl_full) {
++        /* a new scanout texture and no update yet: the whole frame */
++#ifdef CONFIG_PIXMAN
++        pixman_region32_clear(&ddl->gl_damage);
++#else
++        ddl->gl_damage = 0;
++#endif
++        dbus_call_update_gl(dcl, 0, 0, 0, 0);
++        return;
++    }
++#endif
++
+ #ifdef CONFIG_PIXMAN
+     int n_rects = pixman_region32_n_rects(&ddl->gl_damage);
+ 
+@@ -671,7 +893,7 @@ static void dbus_gl_gfx_update(DisplayChangeListener *dcl,
+ }
+ #endif
+ 
+-static void dbus_gfx_update_sub(DBusDisplayListener *ddl,
++static void dbus_gfx_update_sub(DBusDisplayListener *ddl, DisplaySurface *ds,
+                                 int x, int y, int w, int h)
+ {
+     pixman_image_t *img;
+@@ -679,22 +901,22 @@ static void dbus_gfx_update_sub(DBusDisplayListener *ddl,
+     GVariant *v_data;
+ 
+     /* make a copy, since gvariant only handles linear data */
+-    stride = w * DIV_ROUND_UP(PIXMAN_FORMAT_BPP(surface_format(ddl->ds)), 8);
+-    img = pixman_image_create_bits(surface_format(ddl->ds),
++    stride = w * DIV_ROUND_UP(PIXMAN_FORMAT_BPP(surface_format(ds)), 8);
++    img = pixman_image_create_bits(surface_format(ds),
+                                    w, h, NULL, stride);
+ #ifdef CONFIG_PIXMAN
+-    pixman_image_composite(PIXMAN_OP_SRC, ddl->ds->image, NULL, img,
++    pixman_image_composite(PIXMAN_OP_SRC, ds->image, NULL, img,
+                            x, y, 0, 0, 0, 0, w, h);
+ #else
+     {
+-        uint8_t *src = (uint8_t *)pixman_image_get_data(ddl->ds->image);
++        uint8_t *src = (uint8_t *)pixman_image_get_data(ds->image);
+         uint8_t *dst = (uint8_t *)pixman_image_get_data(img);
+-        int bp = PIXMAN_FORMAT_BPP(surface_format(ddl->ds)) / 8;
++        int bp = PIXMAN_FORMAT_BPP(surface_format(ds)) / 8;
+         int hh;
+ 
+         for (hh = 0; hh < h; hh++) {
+             memcpy(&dst[stride * hh],
+-                   &src[surface_stride(ddl->ds) * (hh + y) + x * bp],
++                   &src[surface_stride(ds) * (hh + y) + x * bp],
+                    stride);
+         }
+     }
+@@ -713,20 +935,20 @@ static void dbus_gfx_update_sub(DBusDisplayListener *ddl,
+         DBUS_DEFAULT_TIMEOUT, NULL, NULL, NULL);
+ }
+ 
+-static void ddl_scanout(DBusDisplayListener *ddl)
++static void ddl_scanout(DBusDisplayListener *ddl, DisplaySurface *ds)
+ {
+     GVariant *v_data;
+ 
+     v_data = g_variant_new_from_data(
+-        G_VARIANT_TYPE("ay"), surface_data(ddl->ds),
+-        surface_stride(ddl->ds) * surface_height(ddl->ds), TRUE,
+-        (GDestroyNotify)pixman_image_unref, pixman_image_ref(ddl->ds->image));
++        G_VARIANT_TYPE("ay"), surface_data(ds),
++        surface_stride(ds) * surface_height(ds), TRUE,
++        (GDestroyNotify)pixman_image_unref, pixman_image_ref(ds->image));
+ 
+     ddl_discard_display_messages(ddl);
+ 
+     qemu_dbus_display1_listener_call_scanout(
+-        ddl->proxy, surface_width(ddl->ds), surface_height(ddl->ds),
+-        surface_stride(ddl->ds), surface_format(ddl->ds), v_data,
++        ddl->proxy, surface_width(ds), surface_height(ds),
++        surface_stride(ds), surface_format(ds), v_data,
+         G_DBUS_CALL_FLAGS_NONE, DBUS_DEFAULT_TIMEOUT, NULL, NULL,
+         g_object_ref(ddl));
+ }
+@@ -758,10 +980,10 @@ static void dbus_gfx_update(DisplayChangeListener *dcl,
+     }
+ 
+     if (x == 0 && y == 0 && w == surface_width(ddl->ds) && h == surface_height(ddl->ds)) {
+-        return ddl_scanout(ddl);
++        return ddl_scanout(ddl, ddl->ds);
+     }
+ 
+-    dbus_gfx_update_sub(ddl, x, y, w, h);
++    dbus_gfx_update_sub(ddl, ddl->ds, x, y, w, h);
+ }
+ 
+ #ifdef CONFIG_OPENGL
+@@ -883,6 +1105,13 @@ dbus_display_listener_dispose(GObject *object)
+ #ifdef CONFIG_OPENGL
+     egl_fb_destroy(&ddl->fb);
+ #endif
++#else /* !WIN32 */
++    g_clear_object(&ddl->map_proxy);
++#ifdef CONFIG_OPENGL
++    egl_fb_destroy(&ddl->gl_src_fb);
++    egl_fb_destroy(&ddl->gl_fb);
++    g_clear_pointer(&ddl->gl_ds, qemu_free_displaysurface);
++#endif
+ #endif
+ 
+     G_OBJECT_CLASS(dbus_display_listener_parent_class)->dispose(object);
+diff --git a/ui/trace-events b/ui/trace-events
+index 3da0d5e28..7a0f1641f 100644
+--- a/ui/trace-events
++++ b/ui/trace-events
+@@ -158,6 +158,7 @@ dbus_mouse_rel_motion(int dx, int dy) "dx=%d, dy=%d"
+ dbus_touch_send_event(unsigned int kind, uint32_t num_slot, uint32_t x, uint32_t y) "kind=%u, num_slot=%u, x=%d, y=%d"
+ dbus_update(int x, int y, int w, int h) "x=%d, y=%d, w=%d, h=%d"
+ dbus_update_gl(int x, int y, int w, int h) "x=%d, y=%d, w=%d, h=%d"
++dbus_gl_readback(int x, int y, int w, int h, bool mapped) "x=%d, y=%d, w=%d, h=%d mapped=%d"
+ dbus_clipboard_grab(int selection, unsigned int serial) "selection=%d serial=%u"
+ dbus_clipboard_grab_failed(void) ""
+ dbus_clipboard_qemu_request(int type) "type=%d"
