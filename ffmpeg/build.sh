@@ -19,7 +19,7 @@
 #
 #   lib/lib{avcodec,avdevice,avfilter,avformat,avutil,postproc,swresample,swscale}.so.*
 #                         stripped, Debian's sonames; each finds the others by RUNPATH $ORIGIN
-#   lib/pkgconfig/*.pc    relocatable with pkg-config --define-prefix
+#   lib/pkgconfig/*.pc    prefix=${pcfiledir}/../..: usable where unpacked
 #   include/lib*/         the headers
 #   share/doc/ffmpeg/     FFmpeg's licence texts, NOTICE
 #   BUILDINFO             what was built from what and how, and its Depends
@@ -184,9 +184,16 @@ for d in COPYING.GPLv2 COPYING.LGPLv2.1 LICENSE.md; do
 	install -m 0644 "$S/$d" "$PREFIX/share/doc/ffmpeg/$d"
 done
 install -m 0644 "$TOP/NOTICE" "$PREFIX/share/doc/ffmpeg/NOTICE"
-# relocatable: configure writes libdir and includedir out in full
-sed -i -e "s|^libdir=$PREFIX/lib\$|libdir=\${prefix}/lib|" \
-	-e "s|^includedir=$PREFIX/include\$|includedir=\${prefix}/include|" "$PREFIX"/lib/pkgconfig/*.pc
+# The .pc files find the tree from their own place, so they need no --define-prefix (which would
+# redefine the prefix of every other .pc file too, Debian's included) and no sysroot. configure
+# writes libdir and includedir out in full.
+for f in "$PREFIX"/lib/pkgconfig/*.pc; do
+	grep -qx "prefix=$PREFIX" "$f" || die "$f: prefix is not $PREFIX"
+	# shellcheck disable=SC2016 # ${pcfiledir} and ${prefix} are pkg-config's
+	sed -i -e 's|^prefix=.*|prefix=${pcfiledir}/../..|' \
+		-e "s|^libdir=$PREFIX/lib\$|libdir=\${prefix}/lib|" \
+		-e "s|^includedir=$PREFIX/include\$|includedir=\${prefix}/include|" "$f"
+done
 if grep -h -v '^prefix=' "$PREFIX"/lib/pkgconfig/*.pc | grep -F "$PREFIX"; then
 	die "the .pc lines above name $PREFIX instead of \${prefix}"
 fi

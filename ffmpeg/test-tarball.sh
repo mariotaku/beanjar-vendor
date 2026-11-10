@@ -1,29 +1,34 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Check an FFmpeg tarball from build.sh: unpack it into another directory than its prefix, build a
-# small program against it with pkg-config --define-prefix, and run it. The program checks that
-# the headers and the libraries agree, that the V4L2 request device type and the configured
-# hwaccels are there, and that libx264 encodes and the native decoder decodes a few frames. ldd
-# must resolve every FFmpeg library to the unpacked tree.
+# Check an FFmpeg tarball from build.sh where it is unpacked, not at its prefix: build a small
+# program against it with the plain pkg-config (its .pc files locate the tree by ${pcfiledir}),
+# and run it. The program checks that the headers and the libraries agree, that the V4L2 request
+# device type and the configured hwaccels are there, and that libx264 encodes and the native
+# decoder decodes a few frames. ldd must resolve every FFmpeg library to the unpacked tree.
 #
-#   ffmpeg/test-tarball.sh TARBALL [DIR]     default DIR: a temporary directory, removed after
+#   ffmpeg/test-tarball.sh TARBALL [DIR]     default DIR: a new directory next to TARBALL
+#
+# Needs xz-utils, gcc, pkgconf and the development headers that build.sh installs; to run the
+# program, the libraries in BUILDINFO's Depends.
 set -eu
-tarball=$(readlink -f "$1")
-DIR=${2:-}
 die() { echo "test-tarball.sh: $*" >&2; exit 1; }
+[ $# -ge 1 ] || die "usage: test-tarball.sh TARBALL [DIR]"
+tarball=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+DIR=${2:-${tarball%.tar.xz}-test}
 [ ! -e /usr/lib/beanjar/ffmpeg ] || die "remove /usr/lib/beanjar/ffmpeg first"
-if [ -z "$DIR" ]; then
-	DIR=$(mktemp -d)
-	trap 'rm -rf "$DIR"' EXIT
-fi
 rm -rf "$DIR"
-root=$DIR/unpacked/ffmpeg
-mkdir -p "$root"
+mkdir -p "$DIR/root"
+DIR=$(cd "$DIR" && pwd)
+root=$DIR/root
 tar -C "$root" -xJf "$tarball"
+
+unset PKG_CONFIG_SYSROOT_DIR
 export PKG_CONFIG_PATH="$root/lib/pkgconfig"
-[ "$(pkg-config --define-prefix --variable=libdir libavcodec)" = "$root/lib" ] ||
-	die "pkg-config --define-prefix does not relocate libavcodec.pc"
+for v in libdir:lib includedir:include; do
+	d=$(pkg-config --variable="${v%:*}" libavcodec)
+	[ "$(realpath "$d")" = "$root/${v#*:}" ] || die "libavcodec.pc: ${v%:*} $d is not in $root"
+done
 mods="libavcodec libavutil"
 cat > "$DIR/t.c" <<'C'
 #include <stdio.h>
@@ -101,8 +106,7 @@ int main(void)
 }
 C
 # shellcheck disable=SC2046,SC2086 # pkg-config output is word-split on purpose
-cc -o "$DIR/t" "$DIR/t.c" $(pkg-config --define-prefix --cflags $mods) \
-	$(pkg-config --define-prefix --libs $mods) -Wl,-rpath,"$root/lib"
+cc -o "$DIR/t" "$DIR/t.c" $(pkg-config --cflags --libs $mods) -Wl,-rpath,"$root/lib"
 ldd "$DIR/t" | tee "$DIR/ldd.txt"
 for l in avcodec avutil swresample; do
 	grep -q "lib$l\.so\.[0-9]* => $root/lib/" "$DIR/ldd.txt" ||
@@ -112,4 +116,4 @@ if grep -E 'lib(av|sw|postproc)[a-z]*\.so' "$DIR/ldd.txt" | grep -v -q "=> $root
 	die "an FFmpeg library resolves outside the tree"
 fi
 "$DIR/t"
-echo "test-tarball.sh: $(basename "$tarball") OK"
+echo "$tarball: built and ran a program against it, unpacked in $root"

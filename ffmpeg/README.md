@@ -13,7 +13,7 @@ it into a package.
 | Path, under the prefix | |
 |---|---|
 | `lib/libav{codec,device,filter,format,util}.so.*`, `libpostproc.so.*`, `libsw{resample,scale}.so.*` | stripped, with Debian's sonames (`libavcodec.so.61`, ...); each finds the others through RUNPATH `$ORIGIN` |
-| `lib/pkgconfig/*.pc` | relocatable with `pkg-config --define-prefix` |
+| `lib/pkgconfig/*.pc` | pkg-config files with `prefix=${pcfiledir}/../..` |
 | `include/` | the headers |
 | `share/doc/ffmpeg/` | FFmpeg's licence texts and `NOTICE` |
 | `BUILDINFO` | version, architecture, sources and patches with their SHA-256, the configure line, and the Debian packages the libraries need (`dpkg-shlibdeps`), in Debian control syntax |
@@ -82,25 +82,26 @@ docker run --rm -v "$PWD:/src:ro" -v "$PWD/build:/out" debian:trixie /src/ffmpeg
 ```
 
 It writes `build/ffmpeg/ffmpeg-<version>-<arch>.tar.xz` and the patched source,
-`build/ffmpeg/ffmpeg-<version>-source.tar.xz`, and then runs `test-tarball.sh`: that unpacks the
-tarball in another directory, builds a small program against it with `pkg-config
---define-prefix`, and checks that the program runs on the unpacked libraries, finds the
-`v4l2request` device type and hwaccels, and encodes and decodes a few H.264 frames. A build
-takes about four and a half minutes on 24 cores, dependencies and FATE included. With
-`-e STOP_AFTER=configure` the script stops once FFmpeg is configured, which is as far as is
-practical for the other architecture under qemu-user emulation.
+`build/ffmpeg/ffmpeg-<version>-source.tar.xz`, and then runs `test-tarball.sh` with the installed
+prefix removed: that unpacks the tarball in another directory, builds a small program against it
+with the plain `pkg-config` (the `.pc` files find the tree from where they are, as neatvnc's do),
+and checks that the program runs on the unpacked libraries, finds the `v4l2request` device type
+and hwaccels, and encodes and decodes a few H.264 frames. A build takes about four and a half minutes on 24 cores, dependencies and FATE
+included. With `-e STOP_AFTER=configure` the script stops once FFmpeg is configured, which is as
+far as is practical for the other architecture under qemu-user emulation.
 
-## Continuous integration
+## Continuous integration and releases
 
 The FFmpeg workflow (`.github/workflows/ffmpeg.yml`) runs `ffmpeg/build.sh` in a `debian:trixie`
-container on GitHub's amd64 and arm64 runners, for pushes and pull requests that change `ffmpeg/`
-or the workflow; those runs only check that it builds. A manual run (Actions, FFmpeg, "Run
-workflow") also uploads the tarballs as the run's artifacts `beanjar-ffmpeg-amd64` and
-`beanjar-ffmpeg-arm64`.
+container on GitHub's amd64 and arm64 runners, natively on each, tests included. Pushes and pull
+requests that change `ffmpeg/` or the workflow only check that it builds. A manual run (Actions,
+FFmpeg, "Run workflow") also uploads the tarballs as the run's artifacts `beanjar-ffmpeg-amd64`
+and `beanjar-ffmpeg-arm64`, and the patched source as `beanjar-ffmpeg-source`.
 
-Pushing a tag `ffmpeg-<version>`, for example `ffmpeg-7.1.5+beanjar1`, builds both and publishes a
+To release, push a tag `ffmpeg-<version>` matching `VERSION`, for example `ffmpeg-7.1.5+beanjar1`;
+a tag that does not match fails the build. The workflow builds both architectures and publishes a
 GitHub release named after the tag with the two tarballs, the patched source and a `SHA256SUMS`
-file. The tag must match `VERSION`, or the build fails.
+file.
 
 ## Licence
 
