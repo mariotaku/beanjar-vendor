@@ -15,6 +15,9 @@ path = [
   "neatvnc/VERSION",
   "neatvnc/neatvnc.sha256",
   "neatvnc/NOTICE",
+  "ffmpeg/VERSION",
+  "ffmpeg/ffmpeg.sha256",
+  "ffmpeg/NOTICE",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"

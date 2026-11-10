@@ -1,0 +1,15 @@
+de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f  ffmpeg-7.1.5.tar.xz
+30448a6be16ea0a87311d932dbe49974b22741f4133334f42d7312a2bd9fd514  0001-BACKPORT-FFHWAccel-add-buffer_ref-argument-to-start_.patch
+81ee6bbee44af99cfebb8be0c4fb02966f58d82e602f5dfe68020a89ccaf63fa  0002-avutil-hwcontext-Add-hwdevice-type-for-V4L2-Request-.patch
+ca26143faaaefc271cf5375e93ed569a16d4c3edaa2dcb2c812c96bdb5403519  0003-avutil-hwcontext_v4l2request-Probe-for-a-capable-med.patch
+810dfcd796b15ceff74a93d692c88b0d62ccf13b53a80dc3381ef9e86a091cbc  0004-avcodec-Add-common-V4L2-Request-API-code.patch
+8d03cb35fa6d51c94cd034d69d857b14ad68b6fc1b0911dcc13a22c4296d7323  0005-avcodec-v4l2request-Add-common-decode-support-for-hw.patch
+67740dcc41d53d9824c8f9db23e5ed2c6f2c4878fc69af08fdd20b4aae49313f  0006-avcodec-Add-V4L2-Request-API-mpeg2-hwaccel.patch
+9deb300fe609169daf20450f0eba5ab23c002f1df0f8622d3484fe27e0b3c6fa  0007-avcodec-h264dec-add-ref_pic_marking-and-pic_order_cn.patch
+cdc0d8e9a5785aff8bea724d81e90b8b6a272b45f829770b50a69e7fbf0f84f6  0008-avcodec-Add-V4L2-Request-API-h264-hwaccel.patch
+28efda70ddf473233ee0f28313d4d0c24bf0b52fb15e3ea3d4e839611ef5a405  0009-avcodec-Add-V4L2-Request-API-hevc-hwaccel.patch
+be225051ddd096faea1f4ab413e864ae2c86a7c1feeb6b77b38cde4b5a6c769d  0010-avcodec-Add-V4L2-Request-API-vp8-hwaccel.patch
+13daf02e84a240a6e2fb4c22693d751e2f12cdc39db8fa82a94c95ca7cd2dd3a  0011-avcodec-Add-V4L2-Request-API-vp9-hwaccel.patch
+a38a16138354f26d9afa5e4af84eb3afad98575148fd043b6fa25907d0f83982  0012-avcodec-Add-V4L2-Request-API-av1-hwaccel.patch
+5d8f705e091cc427e25824dd6e0f53bd55eda94cbb35f6a6fbc51ee7a2a3acde  0013-avutil-hwcontext_v4l2request-Add-support-for-AFBC_16.patch
+c27783b0d410136b08b816930a3548119ba897f72b868f9f687d2b7a4e36ec06  0014-avutil-hwcontext_v4l2request-Add-support-for-BROADCO.patch

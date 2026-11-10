@@ -1,0 +1,12 @@
+FFmpeg, as built by beanjar-vendor (ffmpeg/)
+
+These libraries are FFmpeg's release named in BUILDINFO, with the V4L2 Request API patches by
+Jonas Karlman (https://github.com/Kwiboo/FFmpeg) applied. Most of FFmpeg, and the patches, are
+licensed under the GNU Lesser General Public License, version 2.1 or later (COPYING.LGPLv2.1).
+This build is configured with --enable-gpl, which compiles in GPL-licensed parts and links
+GPL-licensed libraries (libx264, libx265, libxvidcore), so the libraries as built here are
+licensed under the GNU General Public License, version 2 or later (COPYING.GPLv2). LICENSE.md is
+FFmpeg's own summary of its licensing.
+
+The corresponding source is ffmpeg-<version>-source.tar.xz, published with each release of these
+libraries, and the build script in beanjar-vendor's ffmpeg/ directory.
