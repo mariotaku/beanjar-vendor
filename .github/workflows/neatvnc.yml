@@ -13,6 +13,7 @@ on:
       - "**"
     tags:
       - "neatvnc-*"
+    # path filters are not evaluated for tags
     paths:
       - "neatvnc/**"
       - ".github/workflows/neatvnc.yml"
@@ -30,7 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  neatvnc:
+  build:
     name: neatvnc (${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -64,13 +65,13 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: beanjar-neatvnc-${{ matrix.arch }}
-          path: build/neatvnc/neatvnc-*.tar.xz
+          path: build/neatvnc/neatvnc-*-${{ matrix.arch }}.tar.xz
           if-no-files-found: error
 
   release:
     name: Release
     if: github.ref_type == 'tag'
-    needs: neatvnc
+    needs: build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -83,13 +84,17 @@ jobs:
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           cd dist
-          set -- neatvnc-*.tar.xz
-          [ $# = 2 ] || { ls -l; exit 1; }
-          sha256sum neatvnc-*.tar.xz > SHA256SUMS
+          version=${TAG#neatvnc-}
+          set -- "neatvnc-$version-amd64.tar.xz" "neatvnc-$version-arm64.tar.xz"
+          for f in "$@"; do
+            [ -f "$f" ] || { echo "missing $f" >&2; ls -l; exit 1; }
+          done
+          sha256sum "$@" > SHA256SUMS
           cat SHA256SUMS
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+          gh release create "$TAG" --verify-tag --title "$TAG" \
             --notes "neatvnc and aml for Debian 13 (amd64, arm64), built by neatvnc/build.sh; see neatvnc/README.md." \
-            neatvnc-*.tar.xz SHA256SUMS
+            "$@" SHA256SUMS
