@@ -27,6 +27,7 @@ GitHub release named after the tag.
 | [`angle/`](angle/README.md) | `angle-<version>-macos-<arch>.tar.xz`: ANGLE's `libEGL` and `libGLESv2` with the Metal backend, macOS only | `.github/workflows/macos.yml` |
 | [`virglrenderer/`](virglrenderer/README.md) | `virglrenderer-<version>-macos-<arch>.tar.xz`: virglrenderer from `main` with OpenGL ES host fixes, and libepoxy with EGL, macOS only | `.github/workflows/macos.yml` |
 | [`qemu/`](qemu/README.md) | `qemu-<version>-macos-<arch>.tar.xz`: the same QEMU for macOS | `.github/workflows/macos.yml` |
+| [`homebrew/`](homebrew/README.md) | Homebrew bottles of Beanjar's formulae of the macOS stack, `beanjar-angle`, `beanjar-libepoxy`, `beanjar-virglrenderer` and `beanjar-qemu` | `.github/workflows/homebrew.yml` |
 
 The patches and build scripts are GPL-2.0-or-later (`LICENSE`), except neatvnc's patches, which
 are ISC like neatvnc, and the virglrenderer and libepoxy patches, which are MIT like those; every
@@ -46,4 +47,6 @@ has the macOS, SDK and Xcode versions instead of the Debian release, and, instea
 formulae whose libraries it links, at Homebrew's paths) and `Links` (`otool -L`). The libraries
 have `@rpath` install names and the pkg-config files locate the tree, so the tarballs work
 wherever they are unpacked together. Every run uploads them as the artifacts
-`beanjar-<program>-macos-<arch>`; they are not released yet.
+`beanjar-<program>-macos-<arch>`; they are not released yet. The same stack is also built as
+Homebrew bottles of Beanjar's formulae, which use Homebrew's libraries instead of linking them at
+Homebrew's paths ([`homebrew/`](homebrew/README.md)).

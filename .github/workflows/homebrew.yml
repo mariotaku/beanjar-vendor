@@ -1,0 +1,168 @@
+# SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Build bottles of Beanjar's Homebrew formulae (beanjar-angle, beanjar-libepoxy,
+# beanjar-virglrenderer, beanjar-qemu) on GitHub's macOS runners, for arm64 (macos-15) and
+# Intel (macos-15-intel): each is installed from source with --build-bottle, tested, its linkage
+# checked, audited and bottled (homebrew/bottle.sh). First, homebrew/check.sh checks that the
+# formulae build what this repository pins, and angle/source.sh makes ANGLE's source archive,
+# which the formula downloads from a release that does not exist yet. Last, the bottle JSON of
+# both architectures is merged into the formulae's bottle blocks, as they would be on a release.
+# The bottles, their JSON and the formulae with bottle blocks are uploaded as the run's artifacts;
+# nothing is released.
+name: Homebrew
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "homebrew/**"
+      - "angle/**"
+      - "virglrenderer/**"
+      - "qemu/**"
+      - ".github/workflows/homebrew.yml"
+  pull_request:
+    paths:
+      - "homebrew/**"
+      - "angle/**"
+      - "virglrenderer/**"
+      - "qemu/**"
+      - ".github/workflows/homebrew.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Where the formulae come from: "copy", this repository's homebrew/Formula, which
+  # homebrew/sync.sh keeps the same as Beanjar's Formula/ while Beanjar's repository is private.
+  # Once it is public, take them from there instead, at a commit:
+  #   TAP_SOURCE: "https://github.com/webosbrew/beanjar#<commit>"
+  TAP_SOURCE: copy
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Formulae
+        if: env.TAP_SOURCE != 'copy'
+        run: |
+          git clone -q "${TAP_SOURCE%%#*}" build/tap
+          case $TAP_SOURCE in *"#"*) git -C build/tap checkout -q "${TAP_SOURCE#*#}" ;; esac
+          echo "FORMULA_DIR=build/tap/Formula" >> "$GITHUB_ENV"
+      - name: Check
+        run: sh homebrew/check.sh ${FORMULA_DIR:-}
+
+  angle-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/angle-source/angle-*-source.tar.xz*
+          key: angle-source-${{ hashFiles('angle/source.sh', 'angle/source-paths', 'angle/sources', 'angle/VERSION') }}
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sh angle/source.sh "$GITHUB_WORKSPACE/build/angle-source"
+      - name: SHA-256
+        run: cat build/angle-source/*.sha256
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-angle-source
+          path: build/angle-source/angle-*-source.tar.xz*
+          if-no-files-found: error
+          compression-level: 0
+
+  bottles:
+    name: bottles (${{ matrix.arch }})
+    needs: [check, angle-source]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: macos-arm64
+            runner: macos-15
+          - arch: macos-amd64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beanjar-angle-source
+          path: build/angle-source
+      - name: Homebrew
+        run: |
+          brew update --quiet
+          brew --version
+          xcodebuild -version
+      - name: Tap
+        run: sh homebrew/tap.sh "$TAP_SOURCE" build/angle-source/angle-*-source.tar.xz
+      - name: beanjar-angle
+        run: sh homebrew/bottle.sh beanjar-angle build/bottles
+      - name: beanjar-libepoxy
+        run: sh homebrew/bottle.sh beanjar-libepoxy build/bottles
+      - name: beanjar-virglrenderer
+        run: sh homebrew/bottle.sh beanjar-virglrenderer build/bottles
+      - name: beanjar-qemu
+        run: sh homebrew/bottle.sh beanjar-qemu build/bottles
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-bottles-${{ matrix.arch }}
+          path: build/bottles/
+          if-no-files-found: error
+          compression-level: 0
+
+  bottle-blocks:
+    needs: bottles
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: beanjar-bottles-*
+          path: build/bottles
+          merge-multiple: true
+      - name: Tap
+        run: |
+          brew update --quiet
+          sh homebrew/tap.sh "$TAP_SOURCE"
+      - name: Merge
+        # What a release does to the formulae: their bottle blocks, for both architectures, from
+        # the bottles' JSON
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
+          brew bottle --merge --write --no-commit build/bottles/*.bottle.json
+          tap=$(brew --repository webosbrew/beanjar)
+          git -C "$tap" diff
+          mkdir -p build/formulae
+          cp "$tap"/Formula/*.rb build/formulae/
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-formulae-with-bottles
+          path: build/formulae/
+          if-no-files-found: error
