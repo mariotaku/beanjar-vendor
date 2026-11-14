@@ -21,6 +21,7 @@ path = [
   "ffmpeg/NOTICE",
   "angle/VERSION",
   "angle/sources",
+  "angle/source-paths",
   "angle/NOTICE",
   "virglrenderer/VERSION",
   "virglrenderer/sources",

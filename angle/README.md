@@ -71,6 +71,19 @@ but ANGLE makes no EGL display on it, so there the checks of this tarball and of
 only build and load the libraries. The build takes about eight minutes on arm64 and eighteen on
 Intel, a few of them `gclient`'s fetch.
 
+## The source archive
+
+Homebrew's formula `beanjar-angle` ([`homebrew/`](../homebrew/README.md)) builds from one archive
+pinned by SHA-256 rather than running `gclient`. `angle/source.sh [OUT]` makes it, on Linux or
+macOS: the same checkout as `build.sh`, with git dependencies only, cut down to ANGLE's own files
+and the dependency directories listed in `source-paths` (what gn reads and the libraries are
+compiled from), without git metadata, and packed with a fixed file order, owners, times and modes,
+so that the same inputs give the same bytes. `build/util/LASTCHANGE`, which a hook writes from
+git, is made before the git metadata goes. The prebuilt toolchains (Chromium's clang, gn, ninja and
+Rust) are not in it: the formula takes clang and gn as resources at the URLs and checksums DEPS
+pins, ninja from Homebrew, and builds no Rust. The archive is `angle-<branch>.<commit>-source.tar.xz`
+(about 120 MB; 560 MB unpacked), to be published with ANGLE's release.
+
 ## Licence
 
 ANGLE is licensed under the BSD 3-Clause licence; the third-party code in the libraries under
