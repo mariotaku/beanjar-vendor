@@ -67,19 +67,23 @@ export SOURCE_DATE_EPOCH
 # depot_tools at its pinned commit, never updating itself
 export DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0 GCLIENT_SUPPRESS_GIT_VERSION_WARNING=1
 export PATH="$SRC/depot_tools:$PATH"
-# The checkout is ANGLE's own, unmanaged; the test suites' sources are left out, since no test
-# is built
+# The checkout is ANGLE's own, unmanaged. Left out: the test suites' sources, since no test is
+# built, and the dependencies of the OpenCL and WebGPU (Dawn) backends, since neither is built
 cat > "$SRC/.gclient" <<'EOF'
 solutions = [{
   "name": "angle",
   "url": "https://chromium.googlesource.com/angle/angle.git",
   "deps_file": "DEPS",
   "managed": False,
+  "custom_vars": {
+    "checkout_angle_cl_deps": False,
+    "checkout_angle_dawn_deps": False,
+  },
   "custom_deps": {
-    "third_party/VK-GL-CTS/src": None,
-    "third_party/SwiftShader": None,
-    "third_party/catapult": None,
-    "third_party/cherry": None,
+    "angle/third_party/VK-GL-CTS/src": None,
+    "angle/third_party/SwiftShader": None,
+    "angle/third_party/catapult": None,
+    "angle/third_party/cherry": None,
   },
 }]
 EOF
@@ -109,6 +113,8 @@ mkdir -p "$ROOT/lib/pkgconfig" "$ROOT/include" "$ROOT/share/doc/angle"
 for l in libEGL libGLESv2; do
 	f=$ROOT/lib/$l.dylib
 	install -m 0755 "$A/out/Release/$l.dylib" "$f"
+	echo "$l: built with install name $(otool -D "$f" | tail -n +2)"
+	install_name_tool -id "@rpath/$l.dylib" "$f"
 	strip -S -x "$f"
 	codesign --force --sign - "$f"
 	otool -D "$f" | tail -n +2 | grep -qx "@rpath/$l.dylib" || die "$l: install name"
