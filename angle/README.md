@@ -82,7 +82,7 @@ so that the same inputs give the same bytes. `build/util/LASTCHANGE`, which a ho
 git, is made before the git metadata goes. The prebuilt toolchains (Chromium's clang, gn, ninja and
 Rust) are not in it: the formula takes clang and gn as resources at the URLs and checksums DEPS
 pins, ninja from Homebrew, and builds no Rust. The archive is `angle-<branch>.<commit>-source.tar.xz`
-(about 120 MB; 560 MB unpacked), to be published with ANGLE's release.
+(about 125 MB; 600 MB unpacked), to be published with ANGLE's release.
 
 ## Licence
 

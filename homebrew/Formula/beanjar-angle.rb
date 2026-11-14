@@ -10,7 +10,7 @@ class BeanjarAngle < Formula
   homepage "https://chromium.googlesource.com/angle/angle"
   url "https://github.com/mariotaku/beanjar-vendor/releases/download/angle-8149.29d18232%2Bbeanjar1/angle-8149.29d18232-source.tar.xz"
   version "8149.29d18232+beanjar1"
-  sha256 "5794ff20886b091588004a7bea8c2df98c3b48eb111b84003f1ad90adb8b59f4"
+  sha256 "2dfa4226e05361fb0ee156afdee6848542f11c2152d09165113c44cd5c9ddee0"
   license "BSD-3-Clause"
 
   keg_only "it is Beanjar's own build, used only by Beanjar's QEMU"
