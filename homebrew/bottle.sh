@@ -1,10 +1,10 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build one of Beanjar's Homebrew formulae as a bottle on this Mac and check it: install it from
-# source with --build-bottle (its formulae dependencies from the tap must be installed already),
-# run its test, check its linkage, audit it, and write the bottle and its JSON. Run it on a
-# throwaway Mac (a CI runner) with the tap installed (the Homebrew workflow does that).
+# Build one of Beanjar's Homebrew formulae as a bottle on this Mac and check it: install its
+# dependencies, install it from source with --build-bottle, run its test, check its linkage, audit
+# it, and write the bottle and its JSON. Run it on a throwaway Mac (a CI runner) with the tap
+# installed (the Homebrew workflow does that).
 #
 #   homebrew/bottle.sh FORMULA OUT [ROOT_URL]
 #
@@ -26,7 +26,11 @@ tag=$(printf '%s' "$1-$version" | sed 's/+/%2B/g')
 root_url=${3:-https://github.com/mariotaku/beanjar-vendor/releases/download/$tag}
 t0=$(date +%s)
 
-step "$f $version: install"
+step "$f $version: dependencies"
+# --build-bottle wants every dependency it would install poured from a bottle, and Homebrew has
+# none for Intel Macs (a Tier 3 configuration): install them first, from source where needed
+brew install --only-dependencies "$f"
+step "$f: install"
 brew install --build-bottle --verbose "$f"
 step "$f: test"
 brew test --verbose "$f"

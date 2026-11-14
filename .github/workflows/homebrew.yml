@@ -100,7 +100,8 @@ jobs:
           - arch: macos-amd64
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
+    # Homebrew has no bottles for Intel Macs, so there every dependency builds from source
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

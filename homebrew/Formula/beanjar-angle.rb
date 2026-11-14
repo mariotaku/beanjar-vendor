@@ -21,12 +21,17 @@ class BeanjarAngle < Formula
   depends_on "pkgconf" => :test
   depends_on :macos
 
-  # The toolchain ANGLE's DEPS pins for this commit: Chromium's clang
-  # (third_party/llvm-build/Release+Asserts) and gn (buildtools/mac)
+  # The toolchain ANGLE's DEPS pins for this commit: Chromium's clang and its llvm-otool
+  # (third_party/llvm-build/Release+Asserts), and gn (buildtools/mac)
   on_arm do
     resource "clang" do
       url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac_arm64/clang-llvmorg-24-init-17044-gc3223914-1.tar.xz"
       sha256 "f9294be515a0096120c497bdb70374e3846baa244f039a68444ff44899510c74"
+    end
+
+    resource "llvmobjdump" do
+      url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac_arm64/llvmobjdump-llvmorg-24-init-17044-gc3223914-1.tar.xz"
+      sha256 "208ced05108b28a843fd0c9835d8995ce78a8f32e1e809115e39909c43afb64d"
     end
 
     resource "gn" do
@@ -39,6 +44,11 @@ class BeanjarAngle < Formula
     resource "clang" do
       url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac/clang-llvmorg-24-init-17044-gc3223914-1.tar.xz"
       sha256 "595970106910ebbfa2d1051661a79c7fa728ee6ec211283b0e01909f009b4d1e"
+    end
+
+    resource "llvmobjdump" do
+      url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac/llvmobjdump-llvmorg-24-init-17044-gc3223914-1.tar.xz"
+      sha256 "fec5be8f8004d80edd6e296f53cf4778c242bfac5b1ac6c0e9ea4b78dd1eb0c8"
     end
 
     resource "gn" do
@@ -54,7 +64,9 @@ class BeanjarAngle < Formula
   end
 
   def install
-    resource("clang").stage(buildpath/"third_party/llvm-build/Release+Asserts")
+    llvm = buildpath/"third_party/llvm-build/Release+Asserts"
+    resource("clang").stage(llvm)
+    resource("llvmobjdump").stage { (llvm/"bin").install Dir["bin/*"] }
     resource("gn").stage(buildpath/"buildtools/mac")
     ENV.prepend_path "PATH", formula_opt_libexec("python@3.13")/"bin"
     # No git metadata in the archive: name the commit for ANGLE's version string
