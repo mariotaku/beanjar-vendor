@@ -86,6 +86,9 @@ EOF
 (cd "$SRC" && gclient sync --no-history --shallow --jobs 8 --nohooks)
 (cd "$SRC" && gclient runhooks)
 du -sh "$SRC"
+df -h "$SRC"
+du -sh "$A"/third_party/* "$A"/tools "$A"/build "$A"/buildtools "$SRC/depot_tools" 2>/dev/null |
+	sort -h | tail -12
 
 step "build"
 # A release build with the Metal backend only: no OpenGL, Vulkan, SwiftShader, WebGPU or null
@@ -94,8 +97,11 @@ args="is_debug=false is_component_build=false target_cpu=\"$cpu\" symbol_level=0
 args="$args angle_enable_metal=true angle_enable_gl=false angle_enable_vulkan=false"
 args="$args angle_enable_swiftshader=false angle_enable_wgpu=false angle_enable_null=false"
 args="$args angle_build_tests=false"
-(cd "$A" && gn gen out/Release --args="$args")
-(cd "$A" && ninja -C out/Release libEGL libGLESv2)
+# gn and ninja as DEPS pins them, not depot_tools' wrappers
+gn=$A/buildtools/mac/gn
+ninja=$A/third_party/ninja/ninja
+(cd "$A" && "$gn" gen out/Release --args="$args")
+(cd "$A" && "$ninja" -C out/Release libEGL libGLESv2)
 
 step "tree"
 ROOT=$SRC/root
@@ -117,7 +123,7 @@ install -m 0644 "$A/LICENSE" "$ROOT/share/doc/angle/LICENSE"
 install -m 0644 "$TOP/NOTICE" "$ROOT/share/doc/angle/NOTICE"
 # The licences of the third-party code linked in: every third_party directory the two
 # libraries depend on, by gn's account
-third=$(cd "$A" && for t in libEGL libGLESv2; do gn desc out/Release "//:$t" deps --all; done |
+third=$(cd "$A" && for t in libEGL libGLESv2; do "$gn" desc out/Release "//:$t" deps --all; done |
 	sed -n 's|^//\(\(src/\)\{0,1\}third_party/[^/:]*\).*|\1|p' | sort -u)
 echo "third-party code: $third"
 for t in $third; do

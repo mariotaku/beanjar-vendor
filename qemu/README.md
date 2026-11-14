@@ -92,6 +92,55 @@ tag that does not match fails the build. The workflow builds both architectures 
 GitHub release named after the tag with the two tarballs, the upstream QEMU tarball and a
 `SHA256SUMS` file; the patches are in the tag's source archive.
 
+## macOS
+
+`qemu/build-macos.sh` builds the same release with the same patches for macOS, on GitHub's
+macOS runners (the macOS workflow, `.github/workflows/macos.yml`), against the angle and
+virglrenderer tarballs of the same run.
+
+### What is built for macOS
+
+`aarch64-softmmu` only, as on Debian, with the D-Bus display and D-Bus audio (GIO from Homebrew's
+GLib), CoreAudio, slirp, virtio-9p, OpenGL through libepoxy and virglrenderer (`virtio-gpu-gl`),
+PNG, `usb-redir` and `usb-host`. HVF, QEMU's default on a Mac, stays; it runs AArch64 guests only.
+Left out, beyond what the Debian build leaves out:
+
+- the cocoa display, like every local display in the Debian build;
+- `vhost-user-gpu` and the other tools: QEMU builds `vhost-user-gpu` for Linux only;
+- GBM, `libattr` and the other Linux-only libraries.
+
+QEMU 10.0.2 accepts OpenGL on macOS: its configure only asks for libepoxy with `epoxy/egl.h`,
+which the virglrenderer tarball's libepoxy has. But at run time a display with `gl=on` or
+`gl=es` still fails, since `egl_init()` has no macOS branch (only Windows and GBM); the test
+records what it says. That branch is not part of these patches yet.
+
+### The macOS tarball
+
+`qemu-<version>-macos-<arch>.tar.xz`, `<arch>` `arm64` or `amd64`, with the layout of the Debian
+one without `libexec/`:
+
+| Path | |
+|---|---|
+| `bin/qemu-system-aarch64` | stripped, ad hoc signed again with QEMU's own entitlement (`com.apple.security.hypervisor`, for HVF), `LC_RPATH @loader_path/../lib` |
+| `share/qemu/` | QEMU's data directory |
+| `share/doc/qemu/` | as in the Debian tarball |
+| `BUILDINFO` | as in the Debian tarball, with the macOS and SDK versions instead of the Debian release, and instead of `Depends`: `Requires`, the angle and virglrenderer tarballs it was built against, `Homebrew`, the formulae and versions it links, and `Links`, every library the program loads (`otool -L`) |
+
+It is not self-contained yet. libepoxy, virglrenderer and ANGLE come from the angle and
+virglrenderer tarballs unpacked into the same directory, where the program finds them by its
+`LC_RPATH`. GLib, pixman, libslirp, libfdt, libpng, libusb and usbredir are Homebrew's, linked
+by their absolute paths under Homebrew's prefix (`/opt/homebrew` on arm64), so the program runs
+only on a Mac with those formulae installed; BUILDINFO's `Links` lists them. Bundling them
+under `lib/` with `@rpath` names is a later step.
+
+`qemu/test-tarball-macos.sh` unpacks the three tarballs into one directory and checks that every
+library resolves, that the program is the expected release, that `-display help` lists `dbus`,
+`-audiodev help` lists `coreaudio` and `dbus`, and `-device help` lists `virtio-gpu-gl-pci`,
+`virtio-gpu-pci`, `usb-redir` and `virtio-9p-pci`. Then it starts a VM without a guest (`virt`,
+`-cpu max`, `-display dbus,p2p=yes`, D-Bus audio, `virtio-gpu-pci`) with QMP on a unix socket,
+checks that `query-status` answers `prelaunch`, and quits it. No firmware or guest kernel is
+needed.
+
 ## Licence
 
 QEMU is licensed under the GNU General Public License, version 2; some of its parts are under
