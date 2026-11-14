@@ -101,7 +101,9 @@ step "configure"
 # virtio-9p, PNG for the QMP screendump, usb-redir and usb-host. No cocoa, SDL, GTK, VNC, SPICE
 # or curses display, and no block drivers or crypto libraries beyond QEMU's built-in ones. HVF is
 # QEMU's default on a Mac and stays; it runs AArch64 guests only. No tools: vhost-user-gpu, the
-# one the Debian build ships, is Linux-only.
+# one the Debian build ships, is Linux-only. libfdt has no pkg-config file, so its Homebrew
+# directories are named; nothing else from Homebrew's shared include directory, which could hold
+# another libepoxy's headers.
 set -- --prefix="$PREFIX" --python="$SRC/python/bin/python3" \
 	--target-list=aarch64-softmmu --disable-download \
 	--disable-modules --disable-docs --disable-user --disable-tools --disable-guest-agent \
@@ -112,7 +114,8 @@ set -- --prefix="$PREFIX" --python="$SRC/python/bin/python3" \
 	--disable-curl --disable-gnutls --disable-nettle --disable-gcrypt --disable-capstone \
 	--disable-lzo --disable-bzip2 --disable-zstd --enable-libusb --enable-usb-redir \
 	--disable-smartcard --disable-libssh \
-	--extra-ldflags=-Wl,-rpath,@loader_path/../lib
+	--extra-cflags="-I$BREW/opt/dtc/include" \
+	--extra-ldflags="-L$BREW/opt/dtc/lib -Wl,-rpath,@loader_path/../lib"
 B=$SRC/obj
 mkdir -p "$B"
 (cd "$B" && "$S/configure" "$@")
