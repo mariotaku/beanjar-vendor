@@ -1,0 +1,346 @@
+From ed5f8e0adc68032afcfa6703606b57ed8ef693bb Mon Sep 17 00:00:00 2001
+From: Ngo Quoc Dat <datlechin@gmail.com>
+Date: Wed, 11 Nov 2026 09:56:32 +0700
+Subject: [PATCH 6/7] vrend: use GL_ANGLE_texture_multisample on ES 3.0 hosts
+
+Mesa's virgl driver offers sample counts above 1 only when the host reports
+texture_multisample, which vrend does with multisample textures, on OpenGL
+ES from 3.1. ANGLE on Metal offers ES 3.0 and has them through
+GL_ANGLE_texture_multisample, so its guests had GL_MAX_SAMPLES 1, below the
+4 ES 3.0 requires.
+
+libepoxy builds its dispatch from Khronos' gl.xml, which does not list the
+extension, and aborts on the core entry points there, so they are taken
+from eglGetProcAddress and stand in for glTexStorage2DMultisample,
+glGetMultisamplefv and glSampleMaski in the format and sample count
+checks, the texture allocation and the sample mask. The extension has no
+2D multisample arrays, which such a host refuses. Shaders and the
+blitter's shaders that read a multisample texture enable the extension
+there. Multisample renderbuffers, core in ES 3.0, would not do:
+texture_multisample also lets guests sample multisample textures, and
+vrend keeps every resource a texture.
+
+The test clears a 4-sample target and resolves it in its own format and
+through the blitter's shaders into one without alpha, where the host has
+multisample textures.
+
+Signed-off-by: Ngo Quoc Dat <datlechin@gmail.com>
+---
+ src/vrend/vrend_blitter.c  | 24 ++++++++-------
+ src/vrend/vrend_formats.c  |  8 ++---
+ src/vrend/vrend_renderer.c | 49 +++++++++++++++++++++++++++---
+ src/vrend/vrend_renderer.h |  9 ++++++
+ src/vrend/vrend_shader.c   |  6 +++-
+ tests/test_virgl_cmd.c     | 61 ++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 137 insertions(+), 20 deletions(-)
+
+diff --git a/src/vrend/vrend_blitter.c b/src/vrend/vrend_blitter.c
+index 35163c4f..940377b6 100644
+--- a/src/vrend/vrend_blitter.c
++++ b/src/vrend/vrend_blitter.c
+@@ -125,21 +125,23 @@ prog_key_to_uint64( struct blit_prog_key prog_key )
+    return pu.u;
+ }
+ 
+-static GLint blit_shader_build_and_check(GLenum shader_type, const char *buf)
++static GLint blit_shader_build_and_check(GLenum shader_type, const char *buf, bool msaa)
+ {
+    GLint param;
+    GLint id = glCreateShader(shader_type);
+    const char *version = "#version 310 es\n";
+-   const char *sources[2] = { buf, NULL };
++   const char *sources[3] = { buf, NULL, NULL };
+    GLsizei count = 1;
+ 
+-   /* An ES 3.0 host compiles GLSL ES 3.00 only. Without ES 3.1 there are no
+-    * multisample or cube map array textures to blit, so the shaders it can
+-    * need take nothing from 3.10 but the version line. */
++   /* An ES 3.0 host compiles GLSL ES 3.00 only. It has no cube map array
++    * textures, and multisample ones only through GL_ANGLE_texture_multisample,
++    * so the shaders it can need take nothing else from 3.10. */
+    if (vrend_blit_ctx.glsl_es_300_only && !strncmp(buf, version, strlen(version))) {
+-      sources[0] = "#version 300 es\n";
+-      sources[1] = buf + strlen(version);
+-      count = 2;
++      count = 0;
++      sources[count++] = "#version 300 es\n";
++      if (msaa)
++         sources[count++] = "#extension GL_ANGLE_texture_multisample : require\n";
++      sources[count++] = buf + strlen(version);
+    }
+    glShaderSource(id, count, sources, NULL);
+    glCompileShader(id);
+@@ -352,7 +354,7 @@ static GLuint blit_build_frag_tex_col(struct vrend_blitter_ctx *blit_ctx,
+    VREND_DEBUG(dbg_blit, NULL, "-- Blit FS color shader MSAA: %d -----------------\n"
+                "%s\n---------------------------------------\n", msaa, shader_buf);
+ 
+-   return blit_shader_build_and_check(GL_FRAGMENT_SHADER, shader_buf);
++   return blit_shader_build_and_check(GL_FRAGMENT_SHADER, shader_buf, msaa);
+ }
+ 
+ static GLuint blit_build_frag_depth(struct vrend_blitter_ctx *blit_ctx, enum tgsi_texture_type tgsi_tex_target, bool msaa)
+@@ -378,7 +380,7 @@ static GLuint blit_build_frag_depth(struct vrend_blitter_ctx *blit_ctx, enum tgs
+    VREND_DEBUG(dbg_blit, NULL, "-- Blit FS depth shader MSAA: %d -----------------\n"
+                "%s\n---------------------------------------\n", msaa, shader_buf);
+ 
+-   return blit_shader_build_and_check(GL_FRAGMENT_SHADER, shader_buf);
++   return blit_shader_build_and_check(GL_FRAGMENT_SHADER, shader_buf, msaa);
+ }
+ 
+ static GLuint blit_get_frag_tex_writedepth(struct vrend_blitter_ctx *blit_ctx, enum pipe_texture_target pipe_tex_target, unsigned nr_samples)
+@@ -502,7 +504,7 @@ static void vrend_renderer_init_blit_ctx(struct vrend_blitter_ctx *blit_ctx)
+ 
+    glGenBuffers(1, &blit_ctx->vbo_id);
+    blit_ctx->vs = blit_shader_build_and_check(GL_VERTEX_SHADER,
+-        blit_ctx->use_gles ? VS_PASSTHROUGH_GLES : VS_PASSTHROUGH_GL);
++        blit_ctx->use_gles ? VS_PASSTHROUGH_GLES : VS_PASSTHROUGH_GL, false);
+ 
+    for (i = 0; i < 4; i++) {
+       blit_ctx->vertices[i].pos.z = 0;
+diff --git a/src/vrend/vrend_formats.c b/src/vrend/vrend_formats.c
+index 0cc481e0..d0e6bd9d 100644
+--- a/src/vrend/vrend_formats.c
++++ b/src/vrend/vrend_formats.c
+@@ -661,8 +661,8 @@ void vrend_check_texture_multisample(struct vrend_format_table *table,
+          glGenTextures(1, &tex_id);
+          glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, tex_id);
+          if (table[i].flags & VIRGL_TEXTURE_CAN_TEXTURE_STORAGE) {
+-            glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 2,
+-                                      table[i].internalformat, 32, 32, GL_TRUE);
++            vrend_multisample.tex_storage_2d(GL_TEXTURE_2D_MULTISAMPLE, 2,
++                                             table[i].internalformat, 32, 32, GL_TRUE);
+          } else {
+             glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 2,
+                                     table[i].internalformat, 32, 32, GL_TRUE);
+@@ -732,7 +732,7 @@ unsigned vrend_renderer_query_multisample_caps(unsigned max_samples, struct virg
+          continue;
+       glGenTextures(1, &tex);
+       glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, tex);
+-      glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, test_num_samples[i], GL_RGBA32F, 64, 64, GL_TRUE);
++      vrend_multisample.tex_storage_2d(GL_TEXTURE_2D_MULTISAMPLE, test_num_samples[i], GL_RGBA32F, 64, 64, GL_TRUE);
+       status = glGetError();
+       if (status == GL_NO_ERROR) {
+          glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+@@ -745,7 +745,7 @@ unsigned vrend_renderer_query_multisample_caps(unsigned max_samples, struct virg
+             for (unsigned k = 0; k < test_num_samples[i]; ++k) {
+                float msp[2];
+                uint32_t compressed;
+-               glGetMultisamplefv(GL_SAMPLE_POSITION, k, msp);
++               vrend_multisample.get_multisamplefv(GL_SAMPLE_POSITION, k, msp);
+                compressed = ((unsigned)(floor(msp[0] * 16.0f)) & 0xf) << 4;
+                compressed |= ((unsigned)(floor(msp[1] * 16.0f)) & 0xf);
+                caps->sample_locations[out_buf_offsets[i] + (k >> 2)] |= compressed  << (8 * (k & 3));
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index dde084df..90306216 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -419,6 +419,7 @@ struct global_renderer_state {
+ #endif
+    bool d3d_share_texture : 1;
+    bool gbm_layout_feat : 1;
++   bool angle_texture_multisample : 1;
+ };
+ 
+ struct sysval_uniform_block {
+@@ -1360,6 +1361,40 @@ static void init_features(int gl_ver, int gles_ver)
+    }
+ }
+ 
++struct vrend_multisample_funcs vrend_multisample;
++
++static void init_multisample_funcs(int gles_ver)
++{
++   vrend_multisample.tex_storage_2d = glTexStorage2DMultisample;
++   vrend_multisample.get_multisamplefv = glGetMultisamplefv;
++   vrend_multisample.sample_maski = glSampleMaski;
++   vrend_state.angle_texture_multisample = false;
++
++#ifdef HAVE_EPOXY_EGL_H
++   /* An OpenGL ES 3.0 host such as ANGLE on Metal has multisample textures
++    * only through GL_ANGLE_texture_multisample, which has no 2D arrays. */
++   if (gles_ver != 30 || !epoxy_has_gl_extension("GL_ANGLE_texture_multisample"))
++      return;
++
++   struct vrend_multisample_funcs angle = {
++      .tex_storage_2d = (PFNGLTEXSTORAGE2DMULTISAMPLEPROC)
++         eglGetProcAddress("glTexStorage2DMultisampleANGLE"),
++      .get_multisamplefv = (PFNGLGETMULTISAMPLEFVPROC)
++         eglGetProcAddress("glGetMultisamplefvANGLE"),
++      .sample_maski = (PFNGLSAMPLEMASKIPROC)
++         eglGetProcAddress("glSampleMaskiANGLE"),
++   };
++   if (!angle.tex_storage_2d || !angle.get_multisamplefv || !angle.sample_maski)
++      return;
++
++   vrend_multisample = angle;
++   vrend_state.angle_texture_multisample = true;
++   set_feature(feat_texture_multisample);
++   set_feature(feat_storage_multisample);
++   set_feature(feat_sample_mask);
++#endif
++}
++
+ static void vrend_destroy_surface(struct vrend_surface *surf)
+ {
+    if (surf->gl_id != surf->texture->gl_id)
+@@ -7847,6 +7882,8 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+    if (!vrend_winsys_has_gl_colorspace())
+       clear_feature(feat_srgb_write_control) ;
+ 
++   init_multisample_funcs(gles ? gl_ver : 0);
++
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, (GLint *) &vrend_state.max_draw_buffers);
+ 
+    /* For testing we need to know maximum */
+@@ -8306,6 +8343,10 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
+          snprintf(errmsg, 256, "Multisample textures not 2D (target:%d)", args->target);
+          return -1;
+       }
++      if (args->target == PIPE_TEXTURE_2D_ARRAY && vrend_state.angle_texture_multisample) {
++         snprintf(errmsg, 256, "Multisample 2D array textures not supported");
++         return -1;
++      }
+       /* The host's GL refuses a larger count without vrend noticing. */
+       if (tex_conv_table[args->format].max_samples &&
+           args->nr_samples > tex_conv_table[args->format].max_samples) {
+@@ -8981,9 +9022,9 @@ static int vrend_resource_alloc_texture(struct vrend_resource *gr,
+       if (pr->nr_samples > 1) {
+          if (format_can_texture_storage) {
+             if (gr->target == GL_TEXTURE_2D_MULTISAMPLE) {
+-               glTexStorage2DMultisample(gr->target, pr->nr_samples,
+-                                         internalformat, pr->width0, pr->height0,
+-                                         GL_TRUE);
++               vrend_multisample.tex_storage_2d(gr->target, pr->nr_samples,
++                                                internalformat, pr->width0, pr->height0,
++                                                GL_TRUE);
+             } else {
+                glTexStorage3DMultisample(gr->target, pr->nr_samples,
+                                          internalformat, pr->width0, pr->height0, pr->array_size,
+@@ -10571,7 +10612,7 @@ void vrend_set_clip_state(struct vrend_context *ctx, struct pipe_clip_state *ucp
+ void vrend_set_sample_mask(UNUSED struct vrend_context *ctx, unsigned sample_mask)
+ {
+    if (has_feature(feat_sample_mask))
+-      glSampleMaski(0, sample_mask);
++      vrend_multisample.sample_maski(0, sample_mask);
+ }
+ 
+ void vrend_set_min_samples(struct vrend_context *ctx, unsigned min_samples)
+diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
+index 4e3dfef2..23b54cf9 100644
+--- a/src/vrend/vrend_renderer.h
++++ b/src/vrend/vrend_renderer.h
+@@ -508,6 +508,15 @@ void vrend_check_texture_multisample(struct vrend_format_table *table,
+                                      bool enable_storage,
+                                      bool query_samples);
+ 
++/* The core entry points, or on an OpenGL ES 3.0 host those of
++ * GL_ANGLE_texture_multisample, which libepoxy does not know. */
++struct vrend_multisample_funcs {
++   PFNGLTEXSTORAGE2DMULTISAMPLEPROC tex_storage_2d;
++   PFNGLGETMULTISAMPLEFVPROC get_multisamplefv;
++   PFNGLSAMPLEMASKIPROC sample_maski;
++};
++extern struct vrend_multisample_funcs vrend_multisample;
++
+ struct vrend_resource *vrend_renderer_ctx_res_lookup(struct vrend_context *ctx,
+                                                      int res_handle);
+ 
+diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
+index 0bb26a35..ca764f55 100644
+--- a/src/vrend/vrend_shader.c
++++ b/src/vrend/vrend_shader.c
+@@ -6255,7 +6255,11 @@ static void emit_header(const struct dump_ctx *ctx, struct vrend_glsl_strbufs *g
+          emit_ext(glsl_strbufs, "EXT_clip_cull_distance", "require");
+       }
+ 
+-      if (ctx->shader_req_bits & SHADER_REQ_SAMPLER_MS)
++      /* An ES 3.0 host has multisample textures only through
++       * GL_ANGLE_texture_multisample. */
++      if ((ctx->shader_req_bits & SHADER_REQ_SAMPLER_MS) && ctx->cfg->glsl_version < 310)
++         emit_ext(glsl_strbufs, "ANGLE_texture_multisample", "require");
++      else if (ctx->shader_req_bits & SHADER_REQ_SAMPLER_MS)
+          emit_ext(glsl_strbufs, "OES_texture_storage_multisample_2d_array", "require");
+ 
+       if (ctx->shader_req_bits & SHADER_REQ_CONSERVATIVE_DEPTH)
+diff --git a/tests/test_virgl_cmd.c b/tests/test_virgl_cmd.c
+index 08664b45..c6299212 100644
+--- a/tests/test_virgl_cmd.c
++++ b/tests/test_virgl_cmd.c
+@@ -348,6 +348,66 @@ START_TEST(virgl_test_blit_shader)
+ }
+ END_TEST
+ 
++static bool host_has_multisample_textures(void)
++{
++   uint32_t max_ver, max_size;
++   struct virgl_caps_v1 *caps;
++   bool has;
++
++   /* capability set 1, VIRGL */
++   virgl_renderer_get_cap_set(1, &max_ver, &max_size);
++   caps = calloc(1, max_size);
++   virgl_renderer_fill_caps(1, max_ver, caps);
++   has = caps->bset.texture_multisample;
++   free(caps);
++   return has;
++}
++
++/* A 4-sample target cleared and resolved, in its format and through the
++ * blitter's shaders into one without alpha. On an OpenGL ES 3.0 host this
++ * takes GL_ANGLE_texture_multisample. */
++START_TEST(virgl_test_multisample_resolve)
++{
++   struct virgl_context ctx;
++   struct virgl_resource ms, resolved, converted;
++   union pipe_color_union color = { .f = { 0.0f, 1.0f, 0.0f, 1.0f } };
++   int ret;
++
++   ret = testvirgl_init_ctx_cmdbuf(&ctx, context_flags);
++   ck_assert_int_eq(ret, 0);
++   if (!host_has_multisample_textures()) {
++      testvirgl_fini_ctx_cmdbuf(&ctx);
++      return;
++   }
++
++   ret = create_backed_2d_res(&ms, 1, PIPE_FORMAT_B8G8R8A8_UNORM, 16, 16, 4);
++   ck_assert_int_eq(ret, 0);
++   ret = create_backed_2d_res(&resolved, 2, PIPE_FORMAT_B8G8R8A8_UNORM, 16, 16, 0);
++   ck_assert_int_eq(ret, 0);
++   ret = create_backed_2d_res(&converted, 3, PIPE_FORMAT_B8G8R8X8_UNORM, 16, 16, 0);
++   ck_assert_int_eq(ret, 0);
++   virgl_renderer_ctx_attach_resource(ctx.ctx_id, ms.handle);
++   virgl_renderer_ctx_attach_resource(ctx.ctx_id, resolved.handle);
++   virgl_renderer_ctx_attach_resource(ctx.ctx_id, converted.handle);
++
++   clear_res(&ctx, &ms, 1, &color);
++   blit_res(&ctx, &resolved, &ms, 16, 16);
++   blit_res(&ctx, &converted, &ms, 16, 16);
++   ret = testvirgl_ctx_send_cmdbuf(&ctx);
++   ck_assert_int_eq(ret, 0);
++   check_res_rgb(&ctx, &resolved, 16, 16, test_green);
++   check_res_rgb(&ctx, &converted, 16, 16, test_green);
++
++   virgl_renderer_ctx_detach_resource(ctx.ctx_id, converted.handle);
++   virgl_renderer_ctx_detach_resource(ctx.ctx_id, resolved.handle);
++   virgl_renderer_ctx_detach_resource(ctx.ctx_id, ms.handle);
++   testvirgl_destroy_backed_res(&converted);
++   testvirgl_destroy_backed_res(&resolved);
++   testvirgl_destroy_backed_res(&ms);
++   testvirgl_fini_ctx_cmdbuf(&ctx);
++}
++END_TEST
++
+ struct vertex {
+    float position[4];
+    float color[4];
+@@ -2281,6 +2341,7 @@ static Suite *virgl_init_suite(void)
+   tcase_add_test(tc_core, virgl_test_clear);
+   tcase_add_test(tc_core, virgl_test_blit_simple);
+   tcase_add_test(tc_core, virgl_test_blit_shader);
++  tcase_add_test(tc_core, virgl_test_multisample_resolve);
+   tcase_add_test(tc_core, virgl_test_overlap_obj_id);
+   tcase_add_test(tc_core, virgl_test_large_shader);
+   tcase_add_test(tc_core, virgl_test_render_simple);
+-- 
+2.47.3
+

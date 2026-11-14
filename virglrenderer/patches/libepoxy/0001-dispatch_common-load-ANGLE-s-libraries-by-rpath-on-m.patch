@@ -1,0 +1,32 @@
+From 6e12bc53ccbcb07e95d7c4018711fcb330f9daa0 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 00:15:47 +0900
+Subject: [PATCH] dispatch_common: load ANGLE's libraries by @rpath on macOS
+
+libepoxy dlopens EGL and OpenGL ES by their leaf names on macOS, which
+dyld looks for in DYLD_LIBRARY_PATH and its fallback directories. Name
+them @rpath/<name> instead, so that libraries installed next to
+libepoxy, or on the program's run path, are found wherever the tree is
+unpacked.
+---
+ src/dispatch_common.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/dispatch_common.c b/src/dispatch_common.c
+index 3ba9b0f..af9bdb0 100644
+--- a/src/dispatch_common.c
++++ b/src/dispatch_common.c
+@@ -175,10 +175,10 @@
+ 
+ #if defined(__APPLE__)
+ #define GLX_LIB "/opt/X11/lib/libGL.1.dylib"
+-#define EGL_LIB "libEGL.dylib"
++#define EGL_LIB "@rpath/libEGL.dylib"
+ #define OPENGL_LIB "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL"
+-#define GLES1_LIB "libGLESv1_CM.dylib"
+-#define GLES2_LIB "libGLESv2.dylib"
++#define GLES1_LIB "@rpath/libGLESv1_CM.dylib"
++#define GLES2_LIB "@rpath/libGLESv2.dylib"
+ #elif defined(__ANDROID__)
+ #define GLX_LIB "libGLESv2.so"
+ #define EGL_LIB "libEGL.so"

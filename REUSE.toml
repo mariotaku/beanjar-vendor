@@ -19,6 +19,12 @@ path = [
   "ffmpeg/VERSION",
   "ffmpeg/ffmpeg.sha256",
   "ffmpeg/NOTICE",
+  "angle/VERSION",
+  "angle/sources",
+  "angle/NOTICE",
+  "virglrenderer/VERSION",
+  "virglrenderer/sources",
+  "virglrenderer/NOTICE",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"
@@ -30,3 +36,18 @@ path = "neatvnc/patches/**.patch"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"
 SPDX-License-Identifier = "ISC"
+
+# The libepoxy patch changes libepoxy's MIT-licensed code and carries its licence.
+[[annotations]]
+path = "virglrenderer/patches/libepoxy/**.patch"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"
+SPDX-License-Identifier = "MIT"
+
+# The virglrenderer patches are its open merge requests !1713 to !1719, by the author each names;
+# they change virglrenderer's MIT-licensed code and carry its licence.
+[[annotations]]
+path = "virglrenderer/patches/virglrenderer/**.patch"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "The authors named in each patch"
+SPDX-License-Identifier = "MIT"

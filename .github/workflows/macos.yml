@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Build the macOS stack a native VM needs, on GitHub's macOS runners, one job per tarball, each
+# taking the tarballs of the jobs before it: ANGLE (angle/build.sh), libepoxy and virglrenderer
+# (virglrenderer/build.sh), and QEMU (qemu/build-macos.sh). Each build script ends by testing its
+# tarball unpacked. ANGLE's build is cached by the contents of angle/, since it takes the longest.
+# The tarballs are uploaded as the run's artifacts beanjar-<program>-macos-<arch>; nothing is
+# released yet.
+name: macOS
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "angle/**"
+      - "virglrenderer/**"
+      - "qemu/**"
+      - ".github/workflows/macos.yml"
+  pull_request:
+    paths:
+      - "angle/**"
+      - "virglrenderer/**"
+      - "qemu/**"
+      - ".github/workflows/macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  angle:
+    name: angle (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: macos-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/angle/angle-*-${{ matrix.arch }}.tar.xz
+          key: angle-${{ matrix.arch }}-${{ hashFiles('angle/**') }}
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sh angle/build.sh "$GITHUB_WORKSPACE/build/angle"
+      - name: Test
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: sh angle/test-tarball.sh build/angle/angle-*-${{ matrix.arch }}.tar.xz
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-angle-${{ matrix.arch }}
+          path: build/angle/angle-*-${{ matrix.arch }}.tar.xz
+          if-no-files-found: error
+
+  virglrenderer:
+    name: virglrenderer (${{ matrix.arch }})
+    needs: angle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: macos-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beanjar-angle-${{ matrix.arch }}
+          path: build/deps
+      - name: Build
+        run: sh virglrenderer/build.sh build/deps/angle-*-${{ matrix.arch }}.tar.xz "$GITHUB_WORKSPACE/build/virglrenderer"
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-virglrenderer-${{ matrix.arch }}
+          path: build/virglrenderer/virglrenderer-*-${{ matrix.arch }}.tar.xz
+          if-no-files-found: error
+
+  qemu:
+    name: qemu (${{ matrix.arch }})
+    needs: [angle, virglrenderer]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: macos-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: beanjar-*-${{ matrix.arch }}
+          path: build/deps
+          merge-multiple: true
+      - name: Build
+        run: >-
+          sh qemu/build-macos.sh
+          build/deps/angle-*-${{ matrix.arch }}.tar.xz
+          build/deps/virglrenderer-*-${{ matrix.arch }}.tar.xz
+          "$GITHUB_WORKSPACE/build/qemu"
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-qemu-${{ matrix.arch }}
+          path: build/qemu/qemu-*-${{ matrix.arch }}.tar.xz
+          if-no-files-found: error

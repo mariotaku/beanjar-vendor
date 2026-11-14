@@ -1,0 +1,13 @@
+virglrenderer and libepoxy, as built by beanjar-vendor (virglrenderer/)
+
+These libraries are virglrenderer (https://gitlab.freedesktop.org/virgl/virglrenderer) and
+libepoxy (https://github.com/anholt/libepoxy) at the commits named in BUILDINFO, with the patches
+in beanjar-vendor's virglrenderer/patches/ applied, built by the build script next to them.
+
+virglrenderer is licensed under the MIT licence (share/doc/virglrenderer/COPYING); copyright
+Red Hat, Collabora and the virglrenderer contributors. libepoxy is licensed under the MIT licence
+(share/doc/libepoxy/COPYING); copyright Intel Corporation and the libepoxy contributors. The
+patches carry the licence of the project they change, MIT; their authors are named in each.
+
+The build script is licensed under the GNU General Public License, version 2 or (at your option)
+any later version. Copyright Mariotaku <git@mariotaku.me> and the Beanjar contributors.
