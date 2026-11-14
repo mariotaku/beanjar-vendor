@@ -41,6 +41,8 @@ jobs:
         include:
           - arch: macos-arm64
             runner: macos-15
+          - arch: macos-amd64
+            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     steps:
@@ -75,6 +77,8 @@ jobs:
         include:
           - arch: macos-arm64
             runner: macos-15
+          - arch: macos-amd64
+            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -103,6 +107,8 @@ jobs:
         include:
           - arch: macos-arm64
             runner: macos-15
+          - arch: macos-amd64
+            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:

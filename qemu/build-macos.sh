@@ -119,7 +119,8 @@ set -- --prefix="$PREFIX" --python="$SRC/python/bin/python3" \
 B=$SRC/obj
 mkdir -p "$B"
 (cd "$B" && "$S/configure" "$@")
-configure_line="configure $*"
+# the configure line without this build's directory
+configure_line=$(echo "configure $*" | sed "s|$SRC/|<build>/|g")
 
 step "build ($(sysctl -n hw.ncpu) jobs)"
 make -C "$B" -j"$(sysctl -n hw.ncpu)"
