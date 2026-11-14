@@ -140,6 +140,7 @@ class BeanjarAngle < Formula
     # Every Apple silicon Mac has Metal; the Intel runners' paravirtual GPU gives ANGLE no
     # display, so there exit status 2 (no Metal) passes, as it does in the tarball's check.
     output = shell_output("./egl-check 2>&1; echo \"exit status $?\"")
+    puts output
     if Hardware::CPU.intel? && output.include?("exit status 2")
       opoo "ANGLE's Metal backend did not initialise on this Mac"
     else

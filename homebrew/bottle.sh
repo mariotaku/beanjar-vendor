@@ -43,5 +43,5 @@ brew audit --strict --formula "$f"
 step "$f: bottle"
 (cd "$OUT" && brew bottle --json --no-rebuild --root-url="$root_url" "$f")
 ls -l "$OUT"
-du -sh "$(brew --prefix "$f")"
+du -sh "$(brew --prefix "$f")/"
 echo "$f: built, tested and bottled in $(($(date +%s) - t0)) s"

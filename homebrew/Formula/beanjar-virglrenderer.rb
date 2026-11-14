@@ -102,6 +102,7 @@ class BeanjarVirglrenderer < Formula
     # it, a context and a texture created. The Intel runners' paravirtual GPU gives ANGLE no
     # display: there exit status 2 (no Metal) passes, as it does in the tarball's check.
     output = shell_output("./virgl-check 2>&1; echo \"exit status $?\"")
+    puts output
     if Hardware::CPU.intel? && output.include?("exit status 2")
       opoo "ANGLE's Metal backend did not initialise on this Mac"
     else

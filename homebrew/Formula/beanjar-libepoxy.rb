@@ -55,8 +55,11 @@ class BeanjarLibepoxy < Formula
         return 0;
       }
     C
-    system ENV.cc, "test.c", "-o", "test", "-I#{include}", "-L#{lib}", "-lepoxy"
+    ENV.prepend_path "PKG_CONFIG_PATH", formula_opt_lib("webosbrew/beanjar/beanjar-angle")/"pkgconfig"
+    ENV.prepend_path "PKG_CONFIG_PATH", lib/"pkgconfig"
+    system ENV.cc, "test.c", "-o", "test", *shell_output("pkgconf --cflags --libs epoxy").split
     output = shell_output("./test 2>&1; echo \"exit status $?\"")
+    puts output
     # The Intel runners' paravirtual GPU gives ANGLE no display; the library still loaded
     if Hardware::CPU.intel? && output.include?("exit status 2")
       opoo "ANGLE's Metal backend did not initialise on this Mac"
