@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Build the qemu-user tarball (Beanjar's static qemu-arm with the compat bridge) with
+# qemu-user/build.sh in a debian:trixie container on arm64, the only architecture it is built for:
+# it runs inside Beanjar's arm64 guest kernel on every host. Pushes and pull requests that touch
+# qemu-user/ or this workflow only check that it builds; a manual run uploads the tarball as a
+# workflow artifact. Pushing a tag qemu-user-<version>, where <version> is qemu-user/VERSION,
+# builds it and publishes it as a GitHub release, with the upstream QEMU tarball and a SHA256SUMS
+# file.
+name: qemu-user
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "qemu-user-*"
+    # path filters are not evaluated for tags
+    paths:
+      - "qemu-user/**"
+      - ".github/workflows/qemu-user.yml"
+  pull_request:
+    paths:
+      - "qemu-user/**"
+      - ".github/workflows/qemu-user.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-user-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: qemu-user (arm64)
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the tag
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cat qemu-user/VERSION)
+          if [ "$TAG" != "qemu-user-$version" ]; then
+            echo "tag $TAG does not match qemu-user/VERSION ($version)" >&2
+            exit 1
+          fi
+      - name: Build
+        run: sh qemu-user/build.sh "$GITHUB_WORKSPACE/build/qemu-user"
+      - name: Upload
+        if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-qemu-user-arm64
+          path: |
+            build/qemu-user/qemu-user-*-arm64.tar.xz
+            build/qemu-user/qemu-[0-9]*.[0-9].tar.xz
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beanjar-qemu-user-arm64
+          path: dist
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          version=${TAG#qemu-user-}
+          upstream=${version%%+beanjar*}
+          set -- "qemu-user-$version-arm64.tar.xz" "qemu-$upstream.tar.xz"
+          for f in "$@"; do
+            [ -f "$f" ] || { echo "missing $f" >&2; ls -l; exit 1; }
+          done
+          sha256sum "$@" > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes "Beanjar's static qemu-arm (QEMU $version) with the compat bridge, for Beanjar's arm64 guest kernel, built by qemu-user/build.sh; see qemu-user/README.md. The QEMU tarball is the source, with the patches in this tag." \
+            "$@" SHA256SUMS
