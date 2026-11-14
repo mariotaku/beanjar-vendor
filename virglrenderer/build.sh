@@ -105,6 +105,13 @@ rm -rf "$ROOT/bin" "$ROOT/libexec"
 rm -f "$ROOT"/lib/*.a
 for l in "$ROOT"/lib/*.dylib; do
 	[ -L "$l" ] && continue
+	# Meson installs them with install names at the prefix: make them, and the references
+	# between them, @rpath/<name>
+	echo "$l: installed with install name $(otool -D "$l" | tail -n +2)"
+	install_name_tool -id "@rpath/$(otool -D "$l" | tail -n +2 | sed 's|.*/||')" "$l"
+	for d in $(otool -L "$l" | tail -n +2 | sed 's/^[[:space:]]*//; s/ (.*//' | grep "^$ROOT/lib/"); do
+		install_name_tool -change "$d" "@rpath/${d##*/}" "$l"
+	done
 	strip -S -x "$l"
 	codesign --force --sign - "$l"
 	echo "$l:"
