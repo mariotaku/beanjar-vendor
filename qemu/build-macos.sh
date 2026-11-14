@@ -90,6 +90,10 @@ for b in angle virglrenderer; do
 	[ "$(field Architecture "$SRC/BUILDINFO.$b")" = "$arch" ] || die "the $b tarball is not $arch"
 done
 export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
+# QEMU's configure builds its Python venv with distlib, which current pip no longer carries:
+# give it a Python that has it, at a pinned version
+python3 -m venv "$SRC/python"
+"$SRC/python/bin/pip" install --quiet --disable-pip-version-check distlib==0.4.4
 
 step "configure"
 # Only aarch64-softmmu, as on Debian, with what a Mac can give the launcher: OpenGL and
@@ -98,7 +102,8 @@ step "configure"
 # or curses display, and no block drivers or crypto libraries beyond QEMU's built-in ones. HVF is
 # QEMU's default on a Mac and stays; it runs AArch64 guests only. No tools: vhost-user-gpu, the
 # one the Debian build ships, is Linux-only.
-set -- --prefix="$PREFIX" --target-list=aarch64-softmmu --disable-download \
+set -- --prefix="$PREFIX" --python="$SRC/python/bin/python3" \
+	--target-list=aarch64-softmmu --disable-download \
 	--disable-modules --disable-docs --disable-user --disable-tools --disable-guest-agent \
 	--enable-opengl --enable-virglrenderer --enable-dbus-display \
 	--enable-slirp --enable-fdt=system --enable-virtfs --enable-pixman --enable-png \
