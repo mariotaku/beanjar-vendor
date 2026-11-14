@@ -19,6 +19,9 @@ path = [
   "ffmpeg/VERSION",
   "ffmpeg/ffmpeg.sha256",
   "ffmpeg/NOTICE",
+  "testguest/VERSION",
+  "testguest/buildroot.sha256",
+  "testguest/NOTICE",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"

@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Beanjar's test guest userland: armv7 hard-float glibc (Bootlin's external toolchain), BusyBox
+# init, Mesa with the virgl gallium driver only (EGL, OpenGL ES, GBM), a squashfs root filesystem.
+BR2_arm=y
+BR2_cortex_a7=y
+BR2_ARM_FPU_NEON_VFPV4=y
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_ARMV7_EABIHF_GLIBC_STABLE=y
+BR2_CCACHE=y
+BR2_REPRODUCIBLE=y
+BR2_TARGET_GENERIC_HOSTNAME="beanjar-testguest"
+BR2_TARGET_GENERIC_ISSUE="Beanjar test guest"
+BR2_INIT_BUSYBOX=y
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
+BR2_TARGET_GENERIC_GETTY_PORT="hvc0"
+BR2_SYSTEM_DHCP=""
+BR2_PACKAGE_MESA3D=y
+BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_VIRGL=y
+BR2_PACKAGE_MESA3D_OPENGL_EGL=y
+BR2_PACKAGE_MESA3D_OPENGL_ES=y
+BR2_PACKAGE_MESA3D_GBM=y
+BR2_TARGET_ROOTFS_SQUASHFS=y
+BR2_TARGET_ROOTFS_SQUASHFS4_LZO=y
+# BR2_TARGET_ROOTFS_TAR is not set

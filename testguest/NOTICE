@@ -1,0 +1,20 @@
+Beanjar's test guest userland, as built by beanjar-vendor (testguest/)
+
+Everything in rootfs.squashfs and sysroot/ is built by Buildroot from upstream releases, or comes
+from the external toolchain Buildroot uses; nothing in it is Beanjar's own code. Each part keeps its
+own licence:
+
+- BusyBox: GPL-2.0 (archival/libarchive/bz: bzip2-1.0.4)
+- Mesa (EGL, OpenGL ES, GBM, the virgl gallium driver): MIT, SGI-B-2.0, Khronos
+- libdrm, libpthread-stubs, expat: MIT
+- zlib: Zlib
+- the GNU C Library, libgcc, libstdc++ and libgomp, from Bootlin's armv7-eabihf glibc stable
+  toolchain: LGPL-2.1-or-later (the C library) and GPL-3.0-or-later with the GCC Runtime Library
+  Exception (the GCC runtime libraries)
+- Buildroot's skeleton and init scripts: GPL-2.0-or-later
+
+manifest.csv lists every package with its version, licence and source; licenses/ holds their
+licence texts, and buildroot.config the configuration they were built with. The sources of the
+packages, with the patches Buildroot applied, and Buildroot's own release are in the release's
+testguest-<version>-legal-info.tar. The toolchain's sources are published by Bootlin at
+https://toolchains.bootlin.com/downloads/releases/sources/.
