@@ -59,8 +59,10 @@ class BeanjarQemu < Formula
   def install
     python3 = formula_opt_bin("python@3.15")/"python3.15"
     system python3, "-m", "venv", buildpath/"venv"
-    system buildpath/"venv/bin/python3", "-m", "pip", "install", "--no-deps", "--no-index",
-           resource("distlib").cached_download
+    # pip wants the wheel under its own name
+    whl = buildpath/"distlib-0.4.4-py2.py3-none-any.whl"
+    cp resource("distlib").cached_download, whl
+    system buildpath/"venv/bin/python3", "-m", "pip", "install", "--no-deps", "--no-index", whl
     # Only aarch64-softmmu, with what a Mac can give Beanjar's launcher (as in build-macos.sh):
     # OpenGL and virglrenderer, the D-Bus display and audio, CoreAudio, slirp, virtio-9p, PNG for
     # QMP screendump, usb-redir and usb-host. No cocoa, SDL, GTK, VNC, SPICE or curses display,
