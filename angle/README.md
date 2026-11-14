@@ -65,8 +65,11 @@ cannot start (no Metal device), the check says so and passes, unless `ANGLE_REQU
 The macOS workflow (`.github/workflows/macos.yml`) runs it on GitHub's macOS runners, which are
 virtual machines. They have a Metal device, the paravirtual one of macOS's virtualisation: on the
 macos-15 arm64 runners the check reports `ANGLE (Apple, ANGLE Metal Renderer: Apple Paravirtual
-device, ...)` and OpenGL ES 3.0 (contexts for 3.1 and later are refused). The build takes
-about ten minutes there, most of it `gclient`'s fetch.
+device, ...)` and OpenGL ES 3.0 (contexts for 3.1 and later are refused). The macos-15-intel
+runners, which build `macos-amd64`, report an "Apple Paravirtualized Graphics Device" with Metal 2,
+but ANGLE makes no EGL display on it, so there the checks of this tarball and of virglrenderer's
+only build and load the libraries. The build takes about eight minutes on arm64 and eighteen on
+Intel, a few of them `gclient`'s fetch.
 
 ## Licence
 
