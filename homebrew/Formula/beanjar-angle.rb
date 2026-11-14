@@ -73,9 +73,16 @@ class BeanjarAngle < Formula
       angle_enable_wgpu=false
       angle_enable_null=false
       angle_build_tests=false
+      enable_rust=false
+      enable_rust_cxx=false
+      use_siso=false
     ]
     gn = buildpath/"buildtools/mac/gn"
-    system gn, "gen", "out/Release", "--args=#{args.join(" ")}"
+    # ANGLE's .gn runs gn's scripts with the prebuilt Python of its DEPS, which the archive leaves
+    # out with the other prebuilt tools; nothing in these libraries is Rust, and ninja runs the
+    # build rather than siso
+    python3 = formula_opt_libexec("python@3.13")/"bin/python3"
+    system gn, "gen", "out/Release", "--script-executable=#{python3}", "--args=#{args.join(" ")}"
     system "ninja", "-C", "out/Release", "libEGL", "libGLESv2"
 
     # Homebrew gives them install names in the keg's opt path
@@ -85,7 +92,8 @@ class BeanjarAngle < Formula
     # The licences of the third-party code linked in: each third_party directory the libraries
     # depend on, by gn's account
     third = %w[libEGL libGLESv2].flat_map do |t|
-      Utils.safe_popen_read(gn, "desc", "out/Release", "//:#{t}", "deps", "--all").lines
+      Utils.safe_popen_read(gn, "desc", "--script-executable=#{python3}", "out/Release", "//:#{t}",
+                            "deps", "--all").lines
     end
     third = third.filter_map { |l| l[%r{^//(.*third_party/[^/:]*)}, 1] }.uniq.sort
     names = %w[LICENSE LICENSE.TXT LICENSE.txt LICENSE.md COPYING]
