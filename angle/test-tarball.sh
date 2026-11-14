@@ -38,6 +38,8 @@ done
 cc -o "$DIR/egl-check" "$TOP/egl-check.c" $(pkg-config --cflags --libs egl glesv2) \
 	-Wl,-rpath,"$root/lib"
 otool -L "$DIR/egl-check"
+# the GPU and Metal support macOS reports, for the record
+system_profiler SPDisplaysDataType 2>/dev/null | sed -nE '/Chipset Model|Metal|Vendor|Type/p' || true
 r=0
 "$DIR/egl-check" || r=$?
 case $r in

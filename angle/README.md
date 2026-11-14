@@ -32,8 +32,8 @@ Upstream ANGLE rather than the Xcode project in UTM's WebKit fork (`Source/Third
 `utmapp/WebKit`): it is pinned by one commit whose `DEPS` pins everything else, it is the ANGLE
 that Chromium ships and fixes, its libraries come out with `@rpath` install names (WebKit's are
 set for frameworks inside an app and need rewriting), and nothing is forked. The price is the
-checkout, a few GB fetched by `gclient` with its own clang. The workflow caches the tarball by the
-contents of this directory, so the build only runs again when they change.
+checkout, a few GB fetched by `gclient` with its own clang. The workflow caches the tarball by
+`build.sh`, `sources`, `VERSION` and `NOTICE`, so the build only runs again when they change.
 
 The Metal shaders are compiled by Xcode's `metal` tool. The macos-15 runners' default Xcode
 (16.4) has it; Xcode 26 needs the Metal toolchain downloaded separately.
@@ -62,7 +62,11 @@ on the Metal backend (`EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE`), an OpenGL ES 3 con
 pbuffer, a clear read back with `glReadPixels`, and `GL_RENDERER` printed. Where the Metal backend
 cannot start (no Metal device), the check says so and passes, unless `ANGLE_REQUIRE_METAL=1`.
 
-The macOS workflow (`.github/workflows/macos.yml`) runs it on GitHub's macos-15 (arm64) runners.
+The macOS workflow (`.github/workflows/macos.yml`) runs it on GitHub's macOS runners, which are
+virtual machines. They have a Metal device, the paravirtual one of macOS's virtualisation: on the
+macos-15 arm64 runners the check reports `ANGLE (Apple, ANGLE Metal Renderer: Apple Paravirtual
+device, ...)` and OpenGL ES 3.0 (contexts for 3.1 and later are refused). The build takes
+about ten minutes there, most of it `gclient`'s fetch.
 
 ## Licence
 

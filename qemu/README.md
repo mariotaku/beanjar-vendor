@@ -110,9 +110,13 @@ Left out, beyond what the Debian build leaves out:
 - GBM, `libattr` and the other Linux-only libraries.
 
 QEMU 10.0.2 accepts OpenGL on macOS: its configure only asks for libepoxy with `epoxy/egl.h`,
-which the virglrenderer tarball's libepoxy has. But at run time a display with `gl=on` or
-`gl=es` still fails, since `egl_init()` has no macOS branch (only Windows and GBM); the test
-records what it says. That branch is not part of these patches yet.
+which the virglrenderer tarball's libepoxy has, and everything builds, `virtio-gpu-gl-pci` and
+the `egl-headless` display included. But at run time a display with `gl=on` or `gl=es` fails
+with "egl: not available on this platform", since `egl_init()` has no macOS branch (only Windows
+and GBM); the test records that rather than failing. That branch is not part of these patches
+yet. Besides Homebrew's libraries the program links system ones only: frameworks (Hypervisor,
+CoreAudio, Metal, ParavirtualizedGraphics and vmnet among them), `libz` and `libpam` (QEMU's
+PAM authorisation object, which finds it on every Mac).
 
 ### The macOS tarball
 

@@ -29,8 +29,13 @@ int main(void)
 	};
 	EGLDisplay dpy = eglGetPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE,
 					       (void *)EGL_DEFAULT_DISPLAY, display_attribs);
-	if (dpy == EGL_NO_DISPLAY)
-		return fail("eglGetPlatformDisplay");
+	if (dpy == EGL_NO_DISPLAY) {
+		// ANGLE gives no display for a backend it finds unusable, as Metal on a machine
+		// without a Metal device it supports
+		fprintf(stderr, "no EGL display on the Metal backend (EGL error 0x%04x): no Metal device?\n",
+			eglGetError());
+		return 2;
+	}
 	EGLint major, minor;
 	if (!eglInitialize(dpy, &major, &minor)) {
 		fprintf(stderr, "eglInitialize failed (EGL error 0x%04x): no Metal device?\n",

@@ -3,7 +3,8 @@
 # Build the macOS stack a native VM needs, on GitHub's macOS runners, one job per tarball, each
 # taking the tarballs of the jobs before it: ANGLE (angle/build.sh), libepoxy and virglrenderer
 # (virglrenderer/build.sh), and QEMU (qemu/build-macos.sh). Each build script ends by testing its
-# tarball unpacked. ANGLE's build is cached by the contents of angle/, since it takes the longest.
+# tarball unpacked. ANGLE's tarball is cached by what goes into it (angle/ without its README and
+# check), since its build takes the longest; on a cache hit only its check runs.
 # The tarballs are uploaded as the run's artifacts beanjar-<program>-macos-<arch>; nothing is
 # released yet.
 name: macOS
@@ -54,7 +55,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/angle/angle-*-${{ matrix.arch }}.tar.xz
-          key: angle-${{ matrix.arch }}-${{ hashFiles('angle/**') }}
+          key: angle-${{ matrix.arch }}-${{ hashFiles('angle/build.sh', 'angle/sources', 'angle/VERSION', 'angle/NOTICE') }}
       - name: Build
         if: steps.cache.outputs.cache-hit != 'true'
         run: sh angle/build.sh "$GITHUB_WORKSPACE/build/angle"
