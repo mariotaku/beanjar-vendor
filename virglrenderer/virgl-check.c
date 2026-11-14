@@ -112,7 +112,8 @@ int main(void)
 		.destroy_gl_context = destroy_gl_context,
 		.make_current = make_current,
 	};
-	int r = virgl_renderer_init(NULL, VIRGL_RENDERER_USE_GLES, &cb);
+	// virglrenderer wants a cookie, which it passes back to the callbacks
+	int r = virgl_renderer_init(&dpy, VIRGL_RENDERER_USE_GLES, &cb);
 	if (r) {
 		fprintf(stderr, "FAIL: virgl_renderer_init: %d\n", r);
 		return 1;
@@ -155,7 +156,7 @@ int main(void)
 	virgl_renderer_ctx_detach_resource(1, 1);
 	virgl_renderer_resource_unref(1);
 	virgl_renderer_context_destroy(1);
-	virgl_renderer_cleanup(NULL);
+	virgl_renderer_cleanup(&dpy);
 	printf("virglrenderer: initialised on ES, created a context and a texture\n");
 	return 0;
 }
