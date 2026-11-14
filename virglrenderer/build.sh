@@ -50,10 +50,14 @@ t0=$(date +%s)
 step "build tools"
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
 brew install --quiet meson ninja pkgconf gnu-tar xz
-
-step "sources"
+# virglrenderer generates its format tables with Python and PyYAML, at a pinned version
 SRC=$OUT/src
 rm -rf "$SRC"
+python3 -m venv "$SRC/python"
+"$SRC/python/bin/pip" install --quiet --disable-pip-version-check PyYAML==6.0.3
+export PATH="$SRC/python/bin:$PATH"
+
+step "sources"
 mkdir -p "$SRC/angle"
 while read -r name url commit; do
 	git init -q "$SRC/$name"

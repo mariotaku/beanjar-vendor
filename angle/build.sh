@@ -130,13 +130,16 @@ install -m 0644 "$TOP/NOTICE" "$ROOT/share/doc/angle/NOTICE"
 # The licences of the third-party code linked in: every third_party directory the two
 # libraries depend on, by gn's account
 third=$(cd "$A" && for t in libEGL libGLESv2; do "$gn" desc out/Release "//:$t" deps --all; done |
-	sed -n 's|^//\(\(src/\)\{0,1\}third_party/[^/:]*\).*|\1|p' | sort -u)
+	sed -n 's|^//\(.*third_party/[^/:]*\).*|\1|p' | sort -u)
 echo "third-party code: $third"
 for t in $third; do
 	lic=
-	for c in LICENSE LICENSE.TXT LICENSE.txt LICENSE.md COPYING src/LICENSE src/LICENSE.TXT \
-		src/LICENSE.txt src/COPYING; do
-		[ -f "$A/$t/$c" ] && { lic=$A/$t/$c; break; }
+	# buildtools/third_party/libc++ and the like build what is checked out in third_party/
+	for d in "$t" "third_party/${t##*/}"; do
+		for c in LICENSE LICENSE.TXT LICENSE.txt LICENSE.md COPYING src/LICENSE src/LICENSE.TXT \
+			src/LICENSE.txt src/COPYING; do
+			[ -f "$A/$d/$c" ] && { lic=$A/$d/$c; break 2; }
+		done
 	done
 	[ -n "$lic" ] || { echo "no licence file in $t"; continue; }
 	install -m 0644 "$lic" "$ROOT/share/doc/angle/LICENSE-$(basename "$t")"
