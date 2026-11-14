@@ -73,14 +73,16 @@ static void write_fence(void *cookie, uint32_t fence)
 int main(void)
 {
 	printf("epoxy_has_egl: %d\n", epoxy_has_egl());
-	const EGLAttrib display_attribs[] = {
+	// eglGetPlatformDisplayEXT, as QEMU calls it: before there is a display, libepoxy can only
+	// see client extensions, not that EGL is 1.5
+	const EGLint display_attribs[] = {
 		EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
 		EGL_NONE,
 	};
-	dpy = eglGetPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE, (void *)EGL_DEFAULT_DISPLAY,
-				    display_attribs);
+	dpy = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, (void *)EGL_DEFAULT_DISPLAY,
+				       display_attribs);
 	if (dpy == EGL_NO_DISPLAY)
-		return fail("eglGetPlatformDisplay");
+		return fail("eglGetPlatformDisplayEXT");
 	EGLint major, minor;
 	if (!eglInitialize(dpy, &major, &minor)) {
 		fprintf(stderr, "eglInitialize failed (EGL error 0x%04x): no Metal device?\n",
