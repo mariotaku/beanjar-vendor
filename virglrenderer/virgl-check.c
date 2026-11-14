@@ -24,7 +24,10 @@
 
 static EGLDisplay dpy;
 static EGLConfig config;
+// the last context made without sharing, which shared ones share with, and the last one made
+// current
 static EGLContext first;
+static EGLContext last_current;
 
 static int fail(const char *what)
 {
@@ -46,7 +49,7 @@ static virgl_renderer_gl_context create_gl_context(void *cookie, int scanout,
 					  attribs);
 	printf("create_gl_context ES %d.%d%s: %s\n", param->major_ver, param->minor_ver,
 	       param->shared ? " shared" : "", ctx == EGL_NO_CONTEXT ? "refused" : "ok");
-	if (ctx != EGL_NO_CONTEXT && first == EGL_NO_CONTEXT)
+	if (ctx != EGL_NO_CONTEXT && !param->shared)
 		first = ctx;
 	return ctx == EGL_NO_CONTEXT ? NULL : ctx;
 }
@@ -54,6 +57,10 @@ static virgl_renderer_gl_context create_gl_context(void *cookie, int scanout,
 static void destroy_gl_context(void *cookie, virgl_renderer_gl_context ctx)
 {
 	(void)cookie;
+	if (ctx == first)
+		first = EGL_NO_CONTEXT;
+	if (ctx == last_current)
+		last_current = EGL_NO_CONTEXT;
 	eglDestroyContext(dpy, ctx);
 }
 
@@ -61,6 +68,8 @@ static int make_current(void *cookie, int scanout, virgl_renderer_gl_context ctx
 {
 	(void)cookie;
 	(void)scanout;
+	if (ctx)
+		last_current = ctx;
 	return eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx) ? 0 : -1;
 }
 
@@ -118,7 +127,8 @@ int main(void)
 		fprintf(stderr, "FAIL: virgl_renderer_init: %d\n", r);
 		return 1;
 	}
-	if (first == EGL_NO_CONTEXT || !eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, first))
+	if (last_current == EGL_NO_CONTEXT ||
+	    !eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, last_current))
 		return fail("no virglrenderer context to look at");
 	printf("GL_RENDERER: %s\nGL_VERSION: %s\nepoxy_gl_version %d, desktop GL %d\n",
 	       glGetString(GL_RENDERER), glGetString(GL_VERSION), epoxy_gl_version(),
