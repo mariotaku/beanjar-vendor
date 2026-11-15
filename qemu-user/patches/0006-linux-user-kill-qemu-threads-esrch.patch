@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 17:00:00 +0900
+Subject: [PATCH] linux-user: kill() of qemu's own threads is ESRCH
+
+qemu's own host threads (its RCU thread) are tasks of the guest process:
+they show in /proc/self/task and the cgroup's cgroup.threads, where a
+native process has none, and kill() of any TID of a process signals the
+whole process. systemd-udevd SIGKILLs every task of its cgroup that is
+not itself after it handles events, so under qemu-arm it killed itself
+every few seconds, and the services that Require it (webOS's
+physical-device-manager, which crashed while stopping) went with it.
+
+A kill() whose target is a thread of this process that is neither the
+process nor a guest thread answers ESRCH, as natively such a TID would not
+exist.
+---
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index d158724f6..b1426ebfd 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -8419,6 +8419,34 @@ static int open_self_statm(CPUArchState *cpu_env, int fd)
+     return write(fd, out->str, out->len) == out->len ? 0 : -1;
+ }
+ 
++/*
++ * True if pid is one of qemu's own threads in this process (its RCU thread and the like), not
++ * the process or a guest thread. Those TIDs are in /proc/self/task and cgroup.threads but would
++ * not exist natively, and kill() of any TID of a process signals the whole process: systemd-udevd,
++ * which SIGKILLs every task of its cgroup that is not itself after each event, killed itself.
++ */
++static bool is_qemu_thread(abi_long pid)
++{
++    char path[64];
++    CPUState *cpu;
++
++    if (pid <= 0 || pid == getpid()) {
++        return false;
++    }
++    snprintf(path, sizeof(path), "/proc/self/task/%d", (int)pid);
++    if (access(path, F_OK) != 0) {
++        return false;
++    }
++    WITH_RCU_READ_LOCK_GUARD() {
++        CPU_FOREACH(cpu) {
++            if (get_task_state(cpu)->ts_tid == pid) {
++                return false;
++            }
++        }
++    }
++    return true;
++}
++
+ static int open_self_auxv(CPUArchState *cpu_env, int fd)
+ {
+     CPUState *cpu = env_cpu(cpu_env);
+@@ -9949,6 +9977,9 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
+         return get_errno(syncfs(arg1));
+ #endif
+     case TARGET_NR_kill:
++        if (is_qemu_thread(arg1)) {
++            return -TARGET_ESRCH;
++        }
+         return get_errno(safe_kill(arg1, target_to_host_signal(arg2)));
+ #ifdef TARGET_NR_rename
+     case TARGET_NR_rename:

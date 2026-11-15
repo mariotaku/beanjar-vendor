@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 16:00:00 +0900
+Subject: [PATCH] linux-user: /proc/self/status and statm count the guest's
+ memory
+
+They were the host's, the whole qemu process's: VmSize over 4 GiB (the
+reserved guest address space) and a VmRSS that adds the TCG code buffer
+and qemu's heap to the guest's pages. A guest that watches its own memory
+takes that for a leak: webOS's iconnectivity (UEI QuickSet's memory
+monitor) aborts once its VmRSS passes a limit.
+
+Answer them as /proc/self/maps and smaps are answered, for the guest
+program: VmSize and VmPeak, VmData, VmStk, VmExe and VmLib from the
+guest's mappings (walk_memory_regions), VmRSS, VmHWM, RssAnon, RssFile and
+VmSwap from the host's smaps over the guest's address range; statm alike.
+The other lines are the host's. A process reading another's status still
+sees the whole qemu process.
+---
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index 9859f44c4..8ef4ed61e 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -8264,6 +8264,134 @@ static int open_self_stat(CPUArchState *cpu_env, int fd)
+     return 0;
+ }
+ 
++/*
++ * /proc/self/status and statm count the guest's memory, as the kernel would for the guest
++ * program run natively: its own mappings' sizes (walk_memory_regions) and resident pages (the
++ * host's smaps over the guest's address range), not those of the whole qemu process, whose TCG
++ * code buffer and heap would make a guest that watches its own VmRSS (webOS's iconnectivity
++ * aborts past a limit) think it is leaking. The other lines are the host's.
++ */
++struct guest_mem {
++    const struct image_info *info;
++    uint64_t size, data, stack, exec;
++    uint64_t rss, anon, file, swap;
++};
++
++static int guest_mem_region(void *opaque, target_ulong start, target_ulong end,
++                            unsigned long flags)
++{
++    struct guest_mem *m = opaque;
++    uint64_t len = end - start;
++
++    m->size += len;
++    if (test_stack(start, end, m->info->stack_limit)) {
++        m->stack += len;
++    } else if (flags & PAGE_EXEC) {
++        m->exec += len;
++    } else if (flags & PAGE_WRITE_ORG) {
++        m->data += len;
++    }
++    return 0;
++}
++
++static void guest_mem_read(CPUArchState *cpu_env, struct guest_mem *m)
++{
++    TaskState *ts = get_task_state(env_cpu(cpu_env));
++    g_autofree char *smaps = NULL;
++    char *line, *save = NULL;
++    bool in = false;
++    unsigned long rss_kb = 0, anon_kb = 0;
++
++    memset(m, 0, sizeof(*m));
++    m->info = ts->info;
++    mmap_lock();
++    walk_memory_regions(m, guest_mem_region);
++    mmap_unlock();
++    if (!g_file_get_contents("/proc/self/smaps", &smaps, NULL, NULL)) {
++        return;
++    }
++    for (line = strtok_r(smaps, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
++        unsigned long long s, e;
++        unsigned long kb;
++        int n = 0;
++
++        if (sscanf(line, "%llx-%llx %*s %*s %*s %*s%n", &s, &e, &n) == 2 && n > 0) {
++            if (in) {
++                m->rss += rss_kb;
++                m->anon += anon_kb;
++                m->file += rss_kb - MIN(rss_kb, anon_kb);
++            }
++            in = h2g_valid((void *)(uintptr_t)s) && h2g_valid((void *)(uintptr_t)(e - 1));
++            rss_kb = anon_kb = 0;
++        } else if (in && sscanf(line, "Rss: %lu kB", &kb) == 1) {
++            rss_kb = kb;
++        } else if (in && sscanf(line, "Anonymous: %lu kB", &kb) == 1) {
++            anon_kb = kb;
++        } else if (in && sscanf(line, "Swap: %lu kB", &kb) == 1) {
++            m->swap += kb;
++        }
++    }
++    if (in) {
++        m->rss += rss_kb;
++        m->anon += anon_kb;
++        m->file += rss_kb - MIN(rss_kb, anon_kb);
++    }
++}
++
++static int open_self_status(CPUArchState *cpu_env, int fd)
++{
++    static uint64_t peak_kb, hwm_kb;
++    g_autofree char *host = NULL;
++    g_autoptr(GString) out = g_string_new(NULL);
++    struct guest_mem m;
++    uint64_t exe_kb;
++    char *line, *save = NULL;
++
++    if (!g_file_get_contents("/proc/self/status", &host, NULL, NULL)) {
++        return -1;
++    }
++    guest_mem_read(cpu_env, &m);
++    peak_kb = MAX(peak_kb, m.size / 1024);
++    hwm_kb = MAX(hwm_kb, m.rss);
++    exe_kb = (m.info->end_code - m.info->start_code) / 1024;
++    for (line = strtok_r(host, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
++#define GUEST_KB(name, v) \
++        if (g_str_has_prefix(line, name ":")) { \
++            g_string_append_printf(out, "%s:\t%8" PRIu64 " kB\n", name, (uint64_t)(v)); \
++            continue; \
++        }
++        GUEST_KB("VmPeak", peak_kb)
++        GUEST_KB("VmSize", m.size / 1024)
++        GUEST_KB("VmHWM", hwm_kb)
++        GUEST_KB("VmRSS", m.rss)
++        GUEST_KB("RssAnon", m.anon)
++        GUEST_KB("RssFile", m.file)
++        GUEST_KB("RssShmem", 0)
++        GUEST_KB("VmData", m.data / 1024)
++        GUEST_KB("VmStk", m.stack / 1024)
++        GUEST_KB("VmExe", exe_kb)
++        GUEST_KB("VmLib", m.exec / 1024 - MIN(m.exec / 1024, exe_kb))
++        GUEST_KB("VmSwap", m.swap)
++#undef GUEST_KB
++        g_string_append_printf(out, "%s\n", line);
++    }
++    return write(fd, out->str, out->len) == out->len ? 0 : -1;
++}
++
++static int open_self_statm(CPUArchState *cpu_env, int fd)
++{
++    g_autoptr(GString) out = g_string_new(NULL);
++    struct guest_mem m;
++    uint64_t page_kb = TARGET_PAGE_SIZE / 1024;
++
++    guest_mem_read(cpu_env, &m);
++    g_string_printf(out, "%" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " 0 %" PRIu64 " 0\n",
++                    m.size / TARGET_PAGE_SIZE, m.rss / page_kb, m.file / page_kb,
++                    (uint64_t)(m.info->end_code - m.info->start_code) / TARGET_PAGE_SIZE,
++                    (m.data + m.stack) / TARGET_PAGE_SIZE);
++    return write(fd, out->str, out->len) == out->len ? 0 : -1;
++}
++
+ static int open_self_auxv(CPUArchState *cpu_env, int fd)
+ {
+     CPUState *cpu = env_cpu(cpu_env);
+@@ -8417,6 +8545,8 @@ static int maybe_do_fake_open(CPUArchState *cpu_env, int dirfd,
+         { "maps", open_self_maps, is_proc_myself },
+         { "smaps", open_self_smaps, is_proc_myself },
+         { "stat", open_self_stat, is_proc_myself },
++        { "status", open_self_status, is_proc_myself },
++        { "statm", open_self_statm, is_proc_myself },
+         { "auxv", open_self_auxv, is_proc_myself },
+         { "cmdline", open_self_cmdline, is_proc_myself },
+ #if HOST_BIG_ENDIAN != TARGET_BIG_ENDIAN
