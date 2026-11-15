@@ -2,16 +2,18 @@
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Build Beanjar's qemu-arm, QEMU's 32-bit ARM user-mode emulator with the compat bridge, as one
-# static aarch64 program, and pack it as a tarball. It runs inside Beanjar's arm64 guest kernel,
-# whatever the host's architecture, so it is built on arm64 only. Run as root in a throwaway
-# debian:trixie container on arm64: it installs the build dependencies into the system it runs in.
+# static program for this machine's architecture, and pack it as a tarball. It runs inside
+# Beanjar's guest kernel, not on the host: the arm64 one runs in the arm64 guest kernel on every
+# host, the amd64 one in the experimental x86-64 guest kernel on amd64 hosts. Run as root in a
+# throwaway debian:trixie container on arm64 or amd64: it installs the build dependencies into the
+# system it runs in.
 #
 #   qemu-user/build.sh [OUT]     default OUT: build/qemu-user in the repository
 #
 # VERSION holds the version, QEMU's upstream version plus a Beanjar revision (10.0.2+beanjar1).
 # Its upstream part names the release tarball, downloaded from qemu.org and checked against
 # qemu.sha256. patches/*.patch are applied in order, and QEMU is configured for arm-linux-user
-# only, static. The result is OUT/qemu-user-<version>-arm64.tar.xz:
+# only, static. The result is OUT/qemu-user-<version>-<arch>.tar.xz (arch: arm64 or amd64):
 #
 #   bin/qemu-arm               stripped, statically linked
 #   share/doc/qemu-user/       QEMU's licence texts, NOTICE
@@ -34,7 +36,7 @@ step() { echo "== $* ($(date -u +%T))"; }
 [ "$(id -u)" = 0 ] || die "run as root in a throwaway Debian 13 container"
 grep -q '^VERSION_ID="13"' /etc/os-release || die "Debian 13 required"
 arch=$(dpkg --print-architecture)
-[ "$arch" = arm64 ] || die "arm64 only (the program runs in the arm64 guest kernel), not $arch"
+case $arch in arm64|amd64) ;; *) die "arm64 or amd64 (the guest kernels' architectures), not $arch" ;; esac
 version=$(cat "$TOP/VERSION")
 upstream=${version%%+beanjar*}
 [ "$upstream" != "$version" ] || die "VERSION $version is not <QEMU version>+beanjar<N>"

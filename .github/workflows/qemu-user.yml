@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build the qemu-user tarball (Beanjar's static qemu-arm with the compat bridge) with
-# qemu-user/build.sh in a debian:trixie container on arm64, the only architecture it is built for:
-# it runs inside Beanjar's arm64 guest kernel on every host. Pushes and pull requests that touch
-# qemu-user/ or this workflow only check that it builds; a manual run uploads the tarball as a
-# workflow artifact. Pushing a tag qemu-user-<version>, where <version> is qemu-user/VERSION,
-# builds it and publishes it as a GitHub release, with the upstream QEMU tarball and a SHA256SUMS
-# file.
+# Build the qemu-user tarballs (Beanjar's static qemu-arm with its bridge) with qemu-user/build.sh
+# in a debian:trixie container on arm64 and amd64, natively on each: the arm64 one runs inside
+# Beanjar's arm64 guest kernel on every host, the amd64 one inside the experimental x86-64 guest
+# kernel on amd64 hosts. Pushes and pull requests that touch qemu-user/ or this workflow only check
+# that they build; a manual run uploads the tarballs as workflow artifacts. Pushing a tag
+# qemu-user-<version>, where <version> is qemu-user/VERSION, builds both and publishes them as a
+# GitHub release, with the upstream QEMU tarball and a SHA256SUMS file.
 name: qemu-user
 
 on:
@@ -34,8 +34,16 @@ concurrency:
 
 jobs:
   build:
-    name: qemu-user (arm64)
-    runs-on: ubuntu-24.04-arm
+    name: qemu-user (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     container: debian:trixie
     timeout-minutes: 60
     steps:
@@ -58,10 +66,15 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: beanjar-qemu-user-arm64
-          path: |
-            build/qemu-user/qemu-user-*-arm64.tar.xz
-            build/qemu-user/qemu-[0-9]*.[0-9].tar.xz
+          name: beanjar-qemu-user-${{ matrix.arch }}
+          path: build/qemu-user/qemu-user-*-${{ matrix.arch }}.tar.xz
+          if-no-files-found: error
+      - name: Upload the source
+        if: matrix.arch == 'arm64' && (github.event_name == 'workflow_dispatch' || github.ref_type == 'tag')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beanjar-qemu-user-source
+          path: build/qemu-user/qemu-[0-9]*.[0-9].tar.xz
           if-no-files-found: error
 
   release:
@@ -74,7 +87,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: beanjar-qemu-user-arm64
+          pattern: beanjar-qemu-user-*
+          merge-multiple: true
           path: dist
       - name: Release
         env:
@@ -85,12 +99,12 @@ jobs:
           cd dist
           version=${TAG#qemu-user-}
           upstream=${version%%+beanjar*}
-          set -- "qemu-user-$version-arm64.tar.xz" "qemu-$upstream.tar.xz"
+          set -- "qemu-user-$version-arm64.tar.xz" "qemu-user-$version-amd64.tar.xz" "qemu-$upstream.tar.xz"
           for f in "$@"; do
             [ -f "$f" ] || { echo "missing $f" >&2; ls -l; exit 1; }
           done
           sha256sum "$@" > SHA256SUMS
           cat SHA256SUMS
           gh release create "$TAG" --verify-tag --title "$TAG" \
-            --notes "Beanjar's static qemu-arm (QEMU $version) with the compat bridge, for Beanjar's arm64 guest kernel, built by qemu-user/build.sh; see qemu-user/README.md. The QEMU tarball is the source, with the patches in this tag." \
+            --notes "Beanjar's static qemu-arm (QEMU $version) with its bridge: arm64 for Beanjar's arm64 guest kernel, amd64 for the experimental x86-64 guest kernel, built by qemu-user/build.sh; see qemu-user/README.md. The QEMU tarball is the source, with the patches in this tag." \
             "$@" SHA256SUMS
