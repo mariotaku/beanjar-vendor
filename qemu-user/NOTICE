@@ -1,7 +1,7 @@
-qemu-arm, as built by beanjar-vendor (qemu-user/)
+qemu-arm and qemu-aarch64, as built by beanjar-vendor (qemu-user/)
 
-This program is QEMU's 32-bit ARM user-mode emulator from the release named in BUILDINFO, built
-from the upstream release tarball (https://download.qemu.org/) with the patches in
+These programs are QEMU's 32-bit ARM user-mode emulator (and, in the amd64 tarball, its 64-bit
+ARM one) from the release named in BUILDINFO, built from the upstream release tarball (https://download.qemu.org/) with the patches in
 beanjar-vendor's qemu-user/patches/ applied, by the build script next to them, and linked
 statically with Debian's GLib, PCRE2, zlib and GNU C Library, whose packages BUILDINFO names.
 
@@ -17,5 +17,5 @@ The patches and the build script are licensed under the GNU General Public Licen
 contributors.
 
 The corresponding source is the QEMU release tarball, published with each release of this
-program, beanjar-vendor's qemu-user/ directory at the release's tag, and the Debian 13 source
+programs, beanjar-vendor's qemu-user/ directory at the release's tag, and the Debian 13 source
 packages of the static libraries named in BUILDINFO.

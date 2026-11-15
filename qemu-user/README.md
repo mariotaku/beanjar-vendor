@@ -7,7 +7,10 @@ architecture is the guest kernel's:
 
 - `arm64`, for Beanjar's arm64 guest kernel on a CPU without AArch32 at EL0, or to check that
   nothing needs it; it serves amd64 and arm64 hosts alike;
-- `amd64`, for Beanjar's experimental x86-64 guest kernel on amd64 hosts (q35 under KVM).
+- `amd64`, for Beanjar's experimental x86-64 guest kernel on amd64 hosts (q35 under KVM). This one
+  also has QEMU's 64-bit ARM user-mode emulator, `qemu-aarch64`, for the 64-bit ARM programs newer
+  firmware ships beside its 32-bit userland (an AArch64 glibc in `/usr/lib64`), which the arm64
+  guest kernel runs natively.
 
 Beanjar's packaging puts the program into its guest components.
 
@@ -62,6 +65,17 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
 - `0006` linux-user: `kill()` of one of qemu's own threads (its RCU thread), which shows in
   `/proc/self/task` and `cgroup.threads` but would not exist natively, answers ESRCH:
   systemd-udevd SIGKILLs every other task of its cgroup after each event and killed itself.
+  `0003` to `0006` are generic linux-user code: `qemu-aarch64` has them as well.
+- `0007` linux-user: `qemu-aarch64` on an x86-64 kernel passes the ioctls it has no table entry
+  for to the kernel unchanged, where stock qemu answers ENOTTY. AArch64 and x86-64 are both LP64
+  with the same alignment and the same ioctl number encoding, so the payload's layout is the
+  kernel's, and with guest addresses equal to host addresses (`guest_base` 0, which qemu picks for
+  a 64-bit guest when the address is free) so are the pointers in it: DRM, V4L2, ALSA and drivers'
+  own ioctls work without a table entry. The ioctls qemu knows are converted as before; with
+  another `guest_base` nothing changes. The kernel log lines of `0001` name the emulator
+  (`qemu-arm`, `qemu-aarch64`). An x86-64 process has a 47-bit address space where an AArch64
+  one has 48: qemu maps the guest where the host kernel puts it, below 128 TiB, so only a guest's
+  fixed mapping above that would fail; programs take the addresses `mmap` gives them.
 
 ## The tarball
 
@@ -71,6 +85,7 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
 | Path | |
 |---|---|
 | `bin/qemu-arm` | the emulator, static, stripped |
+| `bin/qemu-aarch64` | `amd64` only: the 64-bit ARM emulator, static, stripped |
 | `share/doc/qemu-user/` | QEMU's `COPYING`, `COPYING.LIB` and `LICENSE`, and `NOTICE` |
 | `BUILDINFO` | program, version, architecture, Debian release, the configure prefix, the source and patch checksums, the configure line, and `Static-Libraries` |
 
@@ -91,7 +106,10 @@ The tarball is written to `build/qemu-user/qemu-user-<version>-<arch>.tar.xz`, n
 the upstream release tarball. `build.sh` ends by running `qemu-user/test-tarball.sh` on it: the
 program must be a static one for the tarball's architecture, of the expected release, and carry
 its bridge. The bridge
-itself needs Beanjar's guest kernel, so Beanjar's own tests run it there.
+itself needs Beanjar's guest kernel, so Beanjar's own tests run it there. The `amd64` tarball's
+`qemu-aarch64` is checked the same way and runs a tiny static AArch64 program, written by the
+script, whose ioctl qemu has no entry for must come back with the kernel's EBADF for a bad
+descriptor, not qemu's ENOTTY; the `arm64` tarball must have no `qemu-aarch64`.
 
 ## Continuous integration and releases
 

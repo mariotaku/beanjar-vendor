@@ -4,7 +4,9 @@
 # Build Beanjar's qemu-arm, QEMU's 32-bit ARM user-mode emulator with the compat bridge, as one
 # static program for this machine's architecture, and pack it as a tarball. It runs inside
 # Beanjar's guest kernel, not on the host: the arm64 one runs in the arm64 guest kernel on every
-# host, the amd64 one in the experimental x86-64 guest kernel on amd64 hosts. Run as root in a
+# host, the amd64 one in the experimental x86-64 guest kernel on amd64 hosts. The amd64 tarball
+# also has qemu-aarch64, QEMU's 64-bit ARM user-mode emulator, for the 64-bit ARM programs that an
+# arm64 kernel runs natively. Run as root in a
 # throwaway debian:trixie container on arm64 or amd64: it installs the build dependencies into the
 # system it runs in.
 #
@@ -13,9 +15,11 @@
 # VERSION holds the version, QEMU's upstream version plus a Beanjar revision (10.0.2+beanjar1).
 # Its upstream part names the release tarball, downloaded from qemu.org and checked against
 # qemu.sha256. patches/*.patch are applied in order, and QEMU is configured for arm-linux-user
-# only, static. The result is OUT/qemu-user-<version>-<arch>.tar.xz (arch: arm64 or amd64):
+# (and aarch64-linux-user on amd64) only, static. The result is
+# OUT/qemu-user-<version>-<arch>.tar.xz (arch: arm64 or amd64):
 #
 #   bin/qemu-arm               stripped, statically linked
+#   bin/qemu-aarch64           amd64 only, the same
 #   share/doc/qemu-user/       QEMU's licence texts, NOTICE
 #   BUILDINFO                  what was built from what and how, with the Debian packages whose
 #                              static libraries are linked in (Static-Libraries); no Depends
@@ -40,6 +44,11 @@ case $arch in arm64|amd64) ;; *) die "arm64 or amd64 (the guest kernels' archite
 version=$(cat "$TOP/VERSION")
 upstream=${version%%+beanjar*}
 [ "$upstream" != "$version" ] || die "VERSION $version is not <QEMU version>+beanjar<N>"
+# an arm64 guest kernel runs 64-bit ARM programs natively; an x86-64 one needs qemu-aarch64
+case $arch in
+arm64) programs=qemu-arm targets=arm-linux-user ;;
+amd64) programs="qemu-arm qemu-aarch64" targets=arm-linux-user,aarch64-linux-user ;;
+esac
 t0=$(date +%s)
 
 step "build dependencies"
@@ -73,9 +82,9 @@ export SOURCE_DATE_EPOCH
 cp "$DL/$f" "$OUT/$f"
 
 step "configure"
-# arm-linux-user only, static: no system emulation, tools, docs, plugins, disassembler or crypto
+# the linux-user targets only, static: no system emulation, tools, docs, plugins, disassembler or crypto
 # libraries. --disable-download: the tarball carries the subprojects QEMU still needs.
-set -- --prefix="$PREFIX" --target-list=arm-linux-user --static --disable-download \
+set -- --prefix="$PREFIX" --target-list=$targets --static --disable-download \
 	--disable-system --disable-tools --disable-docs --disable-plugins --disable-capstone \
 	--disable-gnutls --disable-nettle --disable-gcrypt --disable-libudev --disable-selinux \
 	--disable-libdw --disable-zstd --disable-bzip2 --disable-lzo
@@ -85,14 +94,16 @@ mkdir -p "$B"
 configure_line="configure $*"
 
 step "build ($(nproc) jobs)"
-ninja -C "$B" qemu-arm
+ninja -C "$B" $programs
 
 step "tree"
 ROOT=$SRC/root
 mkdir -p "$ROOT/bin" "$ROOT/share/doc/qemu-user"
-install -m 0755 "$B/qemu-arm" "$ROOT/bin/qemu-arm"
-strip --strip-unneeded "$ROOT/bin/qemu-arm"
-file "$ROOT/bin/qemu-arm" | grep -q 'statically linked\|static-pie linked' || die "qemu-arm is not static"
+for q in $programs; do
+	install -m 0755 "$B/$q" "$ROOT/bin/$q"
+	strip --strip-unneeded "$ROOT/bin/$q"
+	file "$ROOT/bin/$q" | grep -q 'statically linked\|static-pie linked' || die "$q is not static"
+done
 for d in COPYING COPYING.LIB LICENSE; do
 	install -m 0644 "$S/$d" "$ROOT/share/doc/qemu-user/$d"
 done
@@ -104,7 +115,7 @@ install -m 0644 "$TOP/NOTICE" "$ROOT/share/doc/qemu-user/NOTICE"
 	echo "Debian-Release: $(cat /etc/debian_version)"
 	echo "Prefix: $PREFIX"
 	echo "License: GPL-2.0-only"
-	echo "Programs: bin/qemu-arm"
+	echo "Programs:$(for q in $programs; do printf ' bin/%s' "$q"; done)"
 	echo "Sources:"
 	echo " $f $f_sha https://download.qemu.org/$f"
 	echo "Patches:"
