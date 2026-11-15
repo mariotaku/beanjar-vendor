@@ -29,9 +29,15 @@ t0=$(date +%s)
 step "$f $version: dependencies"
 # --build-bottle wants every dependency it would install poured from a bottle, and Homebrew has
 # none for Intel Macs (a Tier 3 configuration): install them first, from source where needed.
-# --overwrite: the runners come with formulae installed whose links an upgraded dependency takes
-# over (openssl@1.1's bin/openssl, for one)
-brew install --overwrite --only-dependencies "$f"
+# The runners come with programs in /usr/local (Python's installers, openssl@1.1) whose files an
+# upgraded or new dependency would link over; Homebrew then installs it but fails the link step.
+# Link those over the runner's files, then check that nothing is left to install.
+if ! brew install --overwrite --only-dependencies "$f"; then
+	for d in $(brew deps "$f"); do
+		brew list --versions "$d" > /dev/null && brew link --overwrite "$d" 2> /dev/null || true
+	done
+	brew install --only-dependencies "$f"
+fi
 step "$f: install"
 brew install --build-bottle --verbose "$f"
 step "$f: test"
