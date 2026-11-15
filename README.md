@@ -39,9 +39,9 @@ carry their source: the upstream QEMU tarball, and FFmpeg's patched source.
 
 Native VMs on a Mac need QEMU with OpenGL ES, which a Mac only has through ANGLE on Metal. The
 macOS workflow (`.github/workflows/macos.yml`) builds that stack on GitHub's macOS runners
-(macos-15 for arm64, macos-15-intel for amd64), one job per tarball, each built against the tarballs of the jobs before it: ANGLE, then libepoxy and
+(macos-15, Apple silicon only), one job per tarball, each built against the tarballs of the jobs before it: ANGLE, then libepoxy and
 virglrenderer, then QEMU. Their tarballs follow the same contract with two differences. `<arch>`
-is `macos-` and the architecture's Debian name (`macos-arm64`, `macos-amd64`), and `BUILDINFO`
+is `macos-arm64`, and `BUILDINFO`
 has the macOS, SDK and Xcode versions instead of the Debian release, and, instead of `Depends`,
 `Requires` (the other tarballs of the stack, unpacked into the same directory), `Homebrew` (the
 formulae whose libraries it links, at Homebrew's paths) and `Links` (`otool -L`). The libraries

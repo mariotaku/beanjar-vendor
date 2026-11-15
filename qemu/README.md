@@ -120,7 +120,7 @@ PAM authorisation object, which finds it on every Mac).
 
 ### The macOS tarball
 
-`qemu-<version>-macos-<arch>.tar.xz`, `<arch>` `arm64` or `amd64`, with the layout of the Debian
+`qemu-<version>-macos-<arch>.tar.xz`, `<arch>` `arm64`, with the layout of the Debian
 one without `libexec/`:
 
 | Path | |

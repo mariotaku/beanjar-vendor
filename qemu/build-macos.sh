@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build Beanjar's patched QEMU for macOS, for this Mac's architecture (arm64 or x86_64), and pack
+# Build Beanjar's patched QEMU for macOS, for this Mac's architecture (arm64), and pack
 # the installed program and data as a tarball. The same release, patches and target as build.sh's
 # Debian build, configured for what a Mac has: the D-Bus display and audio, CoreAudio, slirp,
 # virtio-9p, and OpenGL through libepoxy and virglrenderer from this repository's angle/ and
@@ -11,7 +11,7 @@
 #   qemu/build-macos.sh ANGLE_TARBALL VIRGLRENDERER_TARBALL [OUT]
 #                                       default OUT: build/qemu in the repository
 #
-# The result is OUT/qemu-<version>-macos-<arch>.tar.xz (<arch> arm64 or amd64), the layout of
+# The result is OUT/qemu-<version>-macos-<arch>.tar.xz (<arch> arm64), the layout of
 # QEMU's installed prefix:
 #
 #   bin/qemu-system-aarch64    stripped, ad hoc signed with QEMU's own entitlements (HVF)
@@ -39,8 +39,7 @@ OUT=$(mkdir -p "$OUT" && cd "$OUT" && pwd)
 PREFIX=/qemu
 case $(uname -m) in
 arm64) arch=macos-arm64 ;;
-x86_64) arch=macos-amd64 ;;
-*) die "arm64 or x86_64, not $(uname -m)" ;;
+*) die "Apple silicon (arm64) required, not $(uname -m)" ;;
 esac
 version=$(cat "$TOP/VERSION")
 upstream=${version%%+beanjar*}

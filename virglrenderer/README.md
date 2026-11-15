@@ -47,7 +47,7 @@ patch names them `@rpath/libEGL.dylib` and so on, so libepoxy finds ANGLE next t
 
 ## The tarball
 
-`virglrenderer-<version>-macos-<arch>.tar.xz`, `<arch>` `arm64` or `amd64`. Its root is a
+`virglrenderer-<version>-macos-<arch>.tar.xz`, `<arch>` `arm64`. Its root is a
 relocatable prefix, meant to be unpacked into the same directory as the angle tarball:
 
 | Path | |

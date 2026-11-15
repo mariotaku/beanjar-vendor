@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build libepoxy with EGL and virglrenderer for macOS, for this Mac's architecture (arm64 or
-# x86_64), against ANGLE's EGL and OpenGL ES from this repository's angle/ tarball, and pack the
+# Build libepoxy with EGL and virglrenderer for macOS, for this Mac's architecture (arm64),
+# against ANGLE's EGL and OpenGL ES from this repository's angle/ tarball, and pack the
 # installed libraries as a tarball. Run it on a throwaway Mac (a CI runner): it installs the build
 # tools with Homebrew.
 #
@@ -12,7 +12,7 @@
 # built from (1.3.0+git20261111.01637fc7), plus a Beanjar revision. `sources` pins both projects
 # by git commit; patches/<project>/*.patch are applied to each in order. Only vrend (virgl, OpenGL
 # ES through ANGLE) is built: no Venus, no video, no DRM renderers, no render server. The result
-# is OUT/virglrenderer-<version>-macos-<arch>.tar.xz (<arch> arm64 or amd64), whose root is a
+# is OUT/virglrenderer-<version>-macos-<arch>.tar.xz (<arch> arm64), whose root is a
 # relocatable prefix:
 #
 #   lib/libepoxy.0.dylib, lib/libvirglrenderer.1.dylib
@@ -39,8 +39,7 @@ OUT=${2:-$TOP/../build/virglrenderer}
 OUT=$(mkdir -p "$OUT" && cd "$OUT" && pwd)
 case $(uname -m) in
 arm64) arch=macos-arm64 ;;
-x86_64) arch=macos-amd64 ;;
-*) die "arm64 or x86_64, not $(uname -m)" ;;
+*) die "Apple silicon (arm64) required, not $(uname -m)" ;;
 esac
 version=$(cat "$TOP/VERSION")
 upstream=${version%%+beanjar*}

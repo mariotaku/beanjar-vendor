@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Build ANGLE's libEGL and libGLESv2 for macOS with only its Metal backend, for this Mac's
-# architecture (arm64 or x86_64), and pack them with ANGLE's headers as a tarball. Run it on a
+# architecture (arm64), and pack them with ANGLE's headers as a tarball. Run it on a
 # throwaway Mac (a CI runner) with Xcode: it installs a few tools with Homebrew.
 #
 #   angle/build.sh [OUT]     default OUT: build/angle in the repository
@@ -11,7 +11,7 @@
 # (8149.29d18232), plus a Beanjar revision. `sources` pins ANGLE and depot_tools by git commit;
 # ANGLE's DEPS file pins everything else gclient fetches, its own clang and libc++ included, and
 # ANGLE is built the way its own documentation does, with gn and ninja. The result is
-# OUT/angle-<version>-macos-<arch>.tar.xz (<arch> arm64 or amd64), whose root is a relocatable
+# OUT/angle-<version>-macos-<arch>.tar.xz (<arch> arm64), whose root is a relocatable
 # prefix:
 #
 #   lib/libEGL.dylib, lib/libGLESv2.dylib   install names @rpath/<name>; they link only the
@@ -35,8 +35,7 @@ OUT=${1:-$TOP/../build/angle}
 OUT=$(mkdir -p "$OUT" && cd "$OUT" && pwd)
 case $(uname -m) in
 arm64) arch=macos-arm64 cpu=arm64 ;;
-x86_64) arch=macos-amd64 cpu=x64 ;;
-*) die "arm64 or x86_64, not $(uname -m)" ;;
+*) die "Apple silicon (arm64) required, not $(uname -m)" ;;
 esac
 version=$(cat "$TOP/VERSION")
 upstream=${version%%+beanjar*}
