@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Build bottles of Beanjar's Homebrew formulae (beanjar-angle, beanjar-libepoxy,
-# beanjar-virglrenderer, beanjar-qemu) on GitHub's macOS runners, for arm64 (macos-15) and
-# Intel (macos-15-intel): each is installed from source with --build-bottle, tested, its linkage
+# beanjar-virglrenderer, beanjar-qemu), which are for Apple silicon only, on GitHub's arm64 macOS
+# runners (macos-15): each is installed from source with --build-bottle, tested, its linkage
 # checked, audited and bottled (homebrew/bottle.sh). First, homebrew/check.sh checks that the
 # formulae build what this repository pins, and angle/source.sh makes ANGLE's source archive,
-# which the formula downloads from a release that does not exist yet. Last, the bottle JSON of
-# both architectures is merged into the formulae's bottle blocks, as they would be on a release.
+# which the formula downloads from a release that does not exist yet. Last, the bottles' JSON is
+# merged into the formulae's bottle blocks, as it would be on a release.
 # The bottles, their JSON and the formulae with bottle blocks are uploaded as the run's artifacts;
 # nothing is released.
 name: Homebrew
@@ -89,19 +89,9 @@ jobs:
           compression-level: 0
 
   bottles:
-    name: bottles (${{ matrix.arch }})
     needs: [check, angle-source]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: macos-arm64
-            runner: macos-15
-          - arch: macos-amd64
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner }}
-    # Homebrew has no bottles for Intel Macs, so there every dependency builds from source
-    timeout-minutes: 360
+    runs-on: macos-15
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -129,7 +119,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: beanjar-bottles-${{ matrix.arch }}
+          name: beanjar-bottles-macos-arm64
           path: build/bottles/
           if-no-files-found: error
           compression-level: 0
@@ -152,8 +142,7 @@ jobs:
           brew update --quiet
           sh homebrew/tap.sh "$TAP_SOURCE"
       - name: Merge
-        # What a release does to the formulae: their bottle blocks, for both architectures, from
-        # the bottles' JSON
+        # What a release does to the formulae: their bottle blocks, from the bottles' JSON
         run: |
           export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
           brew bottle --merge --write --no-commit build/bottles/*.bottle.json

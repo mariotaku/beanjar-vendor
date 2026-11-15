@@ -17,6 +17,7 @@ class BeanjarQemu < Formula
   depends_on "ninja" => :build
   depends_on "pkgconf" => :build
   depends_on "python@3.15" => :build
+  depends_on arch: :arm64
   depends_on "dtc"
   depends_on "glib"
   depends_on "libpng"
@@ -131,12 +132,9 @@ class BeanjarQemu < Formula
     links = shell_output("otool -L #{qemu}")
     assert_match "beanjar-libepoxy/lib/libepoxy", links
     assert_match "beanjar-virglrenderer/lib/libvirglrenderer", links
-    # HVF needs the hypervisor entitlement; QEMU's own install signs with it. On Intel an
-    # aarch64 QEMU has no HVF and is left unsigned.
-    if Hardware::CPU.arm?
-      system "codesign", "--verify", "--verbose", qemu
-      assert_match "com.apple.security.hypervisor", shell_output("codesign -d --entitlements - #{qemu} 2>&1")
-    end
+    # HVF needs the hypervisor entitlement; QEMU's own install signs with it
+    system "codesign", "--verify", "--verbose", qemu
+    assert_match "com.apple.security.hypervisor", shell_output("codesign -d --entitlements - #{qemu} 2>&1")
 
     # A VM without a guest (virt machine, D-Bus display in peer-to-peer mode) starts paused and
     # answers QMP's query-status on a unix socket, then quits

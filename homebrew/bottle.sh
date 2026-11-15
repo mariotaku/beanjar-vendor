@@ -27,17 +27,9 @@ root_url=${3:-https://github.com/mariotaku/beanjar-vendor/releases/download/$tag
 t0=$(date +%s)
 
 step "$f $version: dependencies"
-# --build-bottle wants every dependency it would install poured from a bottle, and Homebrew has
-# none for Intel Macs (a Tier 3 configuration): install them first, from source where needed.
-# The runners come with programs in /usr/local (Python's installers, openssl@1.1) whose files an
-# upgraded or new dependency would link over; Homebrew then installs it but fails the link step.
-# Link those over the runner's files, then check that nothing is left to install.
-if ! brew install --overwrite --only-dependencies "$f"; then
-	for d in $(brew deps "$f"); do
-		brew list --versions "$d" > /dev/null && brew link --overwrite "$d" 2> /dev/null || true
-	done
-	brew install --only-dependencies "$f"
-fi
+# --build-bottle refuses to install a dependency it cannot pour from a bottle, so they are
+# installed first
+brew install --only-dependencies "$f"
 step "$f: install"
 brew install --build-bottle --verbose "$f"
 step "$f: test"

@@ -22,6 +22,7 @@ class BeanjarVirglrenderer < Formula
   depends_on "pkgconf" => [:build, :test]
   depends_on "python-setuptools" => :build
   depends_on "python@3.15" => :build
+  depends_on arch: :arm64
   depends_on :macos
   depends_on "webosbrew/beanjar/beanjar-angle"
   depends_on "webosbrew/beanjar/beanjar-libepoxy"
@@ -99,15 +100,9 @@ class BeanjarVirglrenderer < Formula
     flags = shell_output("pkgconf --cflags --libs epoxy virglrenderer").split
     system ENV.cc, "virgl-check.c", "-o", "virgl-check", *flags
     # OpenGL ES contexts on ANGLE through libepoxy, virglrenderer started on them as QEMU starts
-    # it, a context and a texture created. The Intel runners' paravirtual GPU gives ANGLE no
-    # display: there exit status 2 (no Metal) passes, as it does in the tarball's check.
-    output = shell_output("./virgl-check 2>&1; echo \"exit status $?\"")
+    # it, a context and a texture created
+    output = shell_output("./virgl-check 2>&1")
     puts output
-    if Hardware::CPU.intel? && output.include?("exit status 2")
-      opoo "ANGLE's Metal backend did not initialise on this Mac"
-    else
-      assert_match "exit status 0", output
-      assert_match "created a context and a texture", output
-    end
+    assert_match "created a context and a texture", output
   end
 end

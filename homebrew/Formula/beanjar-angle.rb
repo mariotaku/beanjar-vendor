@@ -19,42 +19,24 @@ class BeanjarAngle < Formula
   depends_on "python@3.13" => :build
   depends_on xcode: ["16.0", :build] # Metal shader compiler
   depends_on "pkgconf" => :test
+  depends_on arch: :arm64
   depends_on :macos
 
   # The toolchain ANGLE's DEPS pins for this commit: Chromium's clang and its llvm-otool
   # (third_party/llvm-build/Release+Asserts), and gn (buildtools/mac)
-  on_arm do
-    resource "clang" do
-      url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac_arm64/clang-llvmorg-24-init-17044-gc3223914-1.tar.xz"
-      sha256 "f9294be515a0096120c497bdb70374e3846baa244f039a68444ff44899510c74"
-    end
-
-    resource "llvmobjdump" do
-      url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac_arm64/llvmobjdump-llvmorg-24-init-17044-gc3223914-1.tar.xz"
-      sha256 "208ced05108b28a843fd0c9835d8995ce78a8f32e1e809115e39909c43afb64d"
-    end
-
-    resource "gn" do
-      url "https://chrome-infra-packages.appspot.com/dl/gn/gn/mac-arm64/+/git_revision:ed7fee04cb30b96ed40ef188acfad5417349e399"
-      sha256 "761df368eda3518c9a1093e15618232c1884aafa55c49e625ee7226ff4d9c00a"
-    end
+  resource "clang" do
+    url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac_arm64/clang-llvmorg-24-init-17044-gc3223914-1.tar.xz"
+    sha256 "f9294be515a0096120c497bdb70374e3846baa244f039a68444ff44899510c74"
   end
 
-  on_intel do
-    resource "clang" do
-      url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac/clang-llvmorg-24-init-17044-gc3223914-1.tar.xz"
-      sha256 "595970106910ebbfa2d1051661a79c7fa728ee6ec211283b0e01909f009b4d1e"
-    end
+  resource "llvmobjdump" do
+    url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac_arm64/llvmobjdump-llvmorg-24-init-17044-gc3223914-1.tar.xz"
+    sha256 "208ced05108b28a843fd0c9835d8995ce78a8f32e1e809115e39909c43afb64d"
+  end
 
-    resource "llvmobjdump" do
-      url "https://commondatastorage.googleapis.com/chromium-browser-clang/Mac/llvmobjdump-llvmorg-24-init-17044-gc3223914-1.tar.xz"
-      sha256 "fec5be8f8004d80edd6e296f53cf4778c242bfac5b1ac6c0e9ea4b78dd1eb0c8"
-    end
-
-    resource "gn" do
-      url "https://chrome-infra-packages.appspot.com/dl/gn/gn/mac-amd64/+/git_revision:ed7fee04cb30b96ed40ef188acfad5417349e399"
-      sha256 "ee173a255d60258cc2b8fe846d36807315d5ab48de29df63532e90f26f29c8cc"
-    end
+  resource "gn" do
+    url "https://chrome-infra-packages.appspot.com/dl/gn/gn/mac-arm64/+/git_revision:ed7fee04cb30b96ed40ef188acfad5417349e399"
+    sha256 "761df368eda3518c9a1093e15618232c1884aafa55c49e625ee7226ff4d9c00a"
   end
 
   # beanjar-vendor's check of its ANGLE tarball
@@ -70,17 +52,16 @@ class BeanjarAngle < Formula
     resource("gn").stage(buildpath/"buildtools/mac")
     ENV.prepend_path "PATH", formula_opt_libexec("python@3.13")/"bin"
     # Room in the libraries' headers for the longer paths Homebrew writes when it relocates a
-    # bottle (Intel's /usr/local is shorter than the placeholder that replaces it)
+    # bottle into a prefix other than the one it was built in
     inreplace "build/config/mac/BUILD.gn", 'ldflags = [ "-Wl,-ObjC" ]',
               'ldflags = [ "-Wl,-ObjC", "-Wl,-headerpad_max_install_names" ]'
     # No git metadata in the archive: name the commit for ANGLE's version string
     ENV["ANGLE_UPSTREAM_HASH"] = "29d18232e803"
 
-    cpu = Hardware::CPU.arm? ? "arm64" : "x64"
-    args = %W[
+    args = %w[
       is_debug=false
       is_component_build=false
-      target_cpu="#{cpu}"
+      target_cpu="arm64"
       symbol_level=0
       angle_enable_metal=true
       angle_enable_gl=false
@@ -141,18 +122,11 @@ class BeanjarAngle < Formula
     resource("egl-check").stage(testpath)
     system ENV.cc, "egl-check.c", "-o", "egl-check", "-I#{include}", "-L#{lib}", "-lEGL", "-lGLESv2"
     # An EGL display on the Metal backend, an OpenGL ES 3 context, a pixel cleared and read back.
-    # Every Apple silicon Mac has Metal; the Intel runners' paravirtual GPU gives ANGLE no
-    # display, so there exit status 2 (no Metal) passes, as it does in the tarball's check.
-    output = shell_output("./egl-check 2>&1; echo \"exit status $?\"")
+    output = shell_output("./egl-check 2>&1")
     puts output
-    if Hardware::CPU.intel? && output.include?("exit status 2")
-      opoo "ANGLE's Metal backend did not initialise on this Mac"
-    else
-      assert_match "exit status 0", output
-      assert_match "ANGLE Metal Renderer", output
-      assert_match "OpenGL ES 3.", output
-      assert_match "cleared and read back a pixel", output
-    end
+    assert_match "ANGLE Metal Renderer", output
+    assert_match "OpenGL ES 3.", output
+    assert_match "cleared and read back a pixel", output
     %w[egl glesv2].each do |m|
       assert_equal "8149.29d18232", shell_output("pkgconf --modversion #{lib}/pkgconfig/#{m}.pc").strip
     end
