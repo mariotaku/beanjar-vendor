@@ -39,12 +39,12 @@ class BeanjarQemu < Formula
   # The files of QEMU's data directory that Beanjar's VMs load, and the script that deletes the
   # rest (edk2, SeaBIOS and the other architectures' firmware, keymaps), as build-macos.sh does
   resource "share-keep" do
-    url "https://raw.githubusercontent.com/mariotaku/beanjar-vendor/94268c1020d37d5c0db36a03566f551f7311ebb2/qemu/share-keep"
-    sha256 "8e8cd59bd4d240262556372da86cfdd69b7c1a1b4d66e8734508b1eca67c36d7"
+    url "https://raw.githubusercontent.com/mariotaku/beanjar-vendor/23c54cf31d27a9bd842b49e544137cb3f9cdcd1c/qemu/share-keep"
+    sha256 "2ca33e1f0f2d8b51c0d6a528ec5a3eb34478a90a50c3adaad950127507100823"
   end
 
   resource "share-trim" do
-    url "https://raw.githubusercontent.com/mariotaku/beanjar-vendor/94268c1020d37d5c0db36a03566f551f7311ebb2/qemu/share-trim.sh"
+    url "https://raw.githubusercontent.com/mariotaku/beanjar-vendor/23c54cf31d27a9bd842b49e544137cb3f9cdcd1c/qemu/share-trim.sh"
     sha256 "d135ae583215e55de04ac6b9c1f6472a0288cc8b13498f005abe57d75f11939c"
   end
 
