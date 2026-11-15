@@ -8,7 +8,7 @@ class BeanjarQemu < Formula
   desc "Beanjar's patched QEMU for webOS TV virtual machines"
   homepage "https://github.com/mariotaku/beanjar-vendor"
   url "https://download.qemu.org/qemu-10.0.2.tar.xz"
-  version "10.0.2+beanjar1"
+  version "10.0.2+beanjar2"
   sha256 "ef786f2398cb5184600f69aef4d5d691efd44576a3cff4126d38d4c6fec87759"
   license "GPL-2.0-only"
 
