@@ -1,9 +1,14 @@
 # qemu-user: qemu-arm with the compat bridge
 
-QEMU's 32-bit ARM user-mode emulator, `qemu-arm`, as one static aarch64 program, for running a TV
-firmware's 32-bit ARM userland under [Beanjar](https://github.com/mariotaku/beanjar)'s arm64 guest
-kernel without AArch32 at EL0: on a CPU that has none, or to check that nothing needs it. It runs
-inside the guest, not on the host, so the one arm64 tarball serves amd64 and arm64 hosts alike.
+QEMU's 32-bit ARM user-mode emulator, `qemu-arm`, as one static program, for running a TV
+firmware's 32-bit ARM userland under [Beanjar](https://github.com/mariotaku/beanjar)'s guest
+kernel without AArch32 at EL0. It runs inside the guest, not on the host, so the tarball's
+architecture is the guest kernel's:
+
+- `arm64`, for Beanjar's arm64 guest kernel on a CPU without AArch32 at EL0, or to check that
+  nothing needs it; it serves amd64 and arm64 hosts alike;
+- `amd64`, for Beanjar's experimental x86-64 guest kernel on amd64 hosts (q35 under KVM).
+
 Beanjar's packaging puts the program into its guest components.
 
 ## Version
@@ -28,10 +33,20 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   The same patch copies what qemu logs as unimplemented to `/dev/kmsg`, once per message and
   process with the pid and guest program, so a whole system's gaps show in `dmesg`
   (`QEMU_UNIMP_KMSG=0` turns that off).
+- `0002` linux-user: the ioctl bridge, the same idea on an x86-64 kernel with Beanjar's x86
+  `compat_bridge` system call (`0x7ff0`, from its guest kernel's patch "x86: a system call for
+  64-bit tasks that runs one i386 compat call"). The kernel's compat layer there is i386's, with
+  its own call numbers, so qemu converts the ordinary calls itself and hands the kernel only
+  those whose meaning depends on a 32-bit caller: every ioctl, `read`, `write`, `readv` and
+  `writev` on a descriptor qemu does not translate, and the robust futex list. i386 aligns 64-bit
+  fields to 4 where ARM EABI aligns them to 8: the ioctls whose ARM layout is x86-64's native one
+  run natively, and SNDRV_CTL `ELEM_READ`/`ELEM_WRITE` and `VIDIOC_DQEVENT` are repacked to
+  i386's layout and back (`linux-user/ioctl-bridge.c.inc`). `QEMU_BRIDGE` works as for `0001`.
 
 ## The tarball
 
-`qemu-user-<version>-arm64.tar.xz`, for example `qemu-user-10.0.2+beanjar1-arm64.tar.xz`:
+`qemu-user-<version>-<arch>.tar.xz` (arch `arm64` or `amd64`), for example
+`qemu-user-10.0.2+beanjar1-arm64.tar.xz`:
 
 | Path | |
 |---|---|
@@ -46,27 +61,29 @@ versions, whose libraries are linked in (GLib, PCRE2, zlib, the GNU C Library).
 ## Building
 
 `qemu-user/build.sh` installs the build dependencies with apt, so run it as root in a throwaway
-`debian:trixie` container on arm64, for example from the top of a clone:
+`debian:trixie` container on arm64 or amd64 (it builds for the machine it runs on), for example from the top of a clone:
 
 ```sh
 docker run --rm -v "$PWD:/src:ro" -v "$PWD/build:/out" debian:trixie /src/qemu-user/build.sh /out/qemu-user
 ```
 
-The tarball is written to `build/qemu-user/qemu-user-<version>-arm64.tar.xz`, next to a copy of
+The tarball is written to `build/qemu-user/qemu-user-<version>-<arch>.tar.xz`, next to a copy of
 the upstream release tarball. `build.sh` ends by running `qemu-user/test-tarball.sh` on it: the
-program must be a static aarch64 one of the expected release and carry the bridge. The bridge
+program must be a static one for the tarball's architecture, of the expected release, and carry
+its bridge. The bridge
 itself needs Beanjar's guest kernel, so Beanjar's own tests run it there.
 
 ## Continuous integration and releases
 
 The workflow (`.github/workflows/qemu-user.yml`) runs `qemu-user/build.sh` in a `debian:trixie`
-container on GitHub's arm64 runner. Pushes and pull requests that change `qemu-user/` or the
-workflow only check that it builds. A manual run also uploads the tarball and the upstream source
-as the run's artifact `beanjar-qemu-user-arm64`.
+container on GitHub's arm64 and amd64 runners, natively on each. Pushes and pull requests that
+change `qemu-user/` or the workflow only check that it builds. A manual run also uploads the
+tarballs as the run's artifacts `beanjar-qemu-user-arm64` and `beanjar-qemu-user-amd64`, and the
+upstream source as `beanjar-qemu-user-source`.
 
 To release, push a tag `qemu-user-<version>` matching `VERSION`, for example
 `qemu-user-10.0.2+beanjar1`; a tag that does not match fails the build. The workflow publishes a
-GitHub release named after the tag with the tarball, the upstream QEMU tarball and a `SHA256SUMS`
+GitHub release named after the tag with the two tarballs, the upstream QEMU tarball and a `SHA256SUMS`
 file; the patches are in the tag's source archive.
 
 ## Licence

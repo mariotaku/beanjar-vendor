@@ -1,0 +1,292 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 12:00:00 +0900
+Subject: [PATCH] linux-user: an ioctl bridge for an ARM guest on an x86-64
+ kernel
+
+On an x86-64 host whose kernel has Beanjar's x86 compat_bridge system call
+(0x7ff0, one i386 compat call with TS_COMPAT set for that call only), qemu
+converts a 32-bit ARM guest's ordinary system calls itself, as it always
+does, and hands the kernel only those whose meaning depends on a 32-bit
+caller: every ioctl, read, write, readv and writev on a descriptor qemu
+does not translate, and set_robust_list and get_robust_list. The kernel's
+compat converters then do the ABI (compat_sys_ioctl, the drivers'
+compat_ioctl, evdev's and uinput's 16-byte events, compat iovecs).
+
+The x86-64 kernel's compat layer is i386's, which aligns 64-bit fields to
+4 where ARM EABI aligns them to 8. The ioctls whose ARM layout is the
+x86-64 native one (VIDIOC_ENUMSTD and ENUMINPUT, DRM UPDATE_DRAW,
+GETPLANERESOURCES, ADDFB2, OBJ_GETPROPERTIES, OBJ_SETPROPERTY, GETFB2) run
+natively; SNDRV_CTL ELEM_READ and ELEM_WRITE and VIDIOC_DQEVENT are
+repacked in place to i386's layout and back.
+
+As with the aarch64 compat bridge it needs guest_base 0; it is on when the
+kernel answers the call, off otherwise or with QEMU_BRIDGE=0, and
+QEMU_BRIDGE=1 says on stderr why it could not be turned on.
+---
+diff --git a/linux-user/ioctl-bridge.c.inc b/linux-user/ioctl-bridge.c.inc
+new file mode 100644
+index 00000000..ebfcf90c
+--- /dev/null
++++ b/linux-user/ioctl-bridge.c.inc
+@@ -0,0 +1,207 @@
++/*
++ * The ioctl bridge: a 32-bit ARM guest on an x86-64 host whose kernel has Beanjar's x86
++ * compat_bridge system call (0x7ff0: one i386 compat call, with TS_COMPAT set for that call
++ * only). qemu converts ordinary system calls itself, as it always does; only the calls whose
++ * meaning depends on the caller being 32-bit go to the kernel's compat layer, so that the
++ * kernel's own converters (compat_sys_ioctl, the drivers' compat_ioctl, evdev's and uinput's
++ * 16-byte events, compat iovecs, the compat robust futex list) do the ABI:
++ *   ioctl                             every one; no table entry needed here
++ *   read, write, readv, writev        on a descriptor qemu does not translate (fd_trans)
++ *   set_robust_list, get_robust_list  qemu has no robust list of its own for the guest
++ * It needs guest addresses equal to host addresses (guest_base 0).
++ *
++ * The x86-64 kernel's compat layer is i386's, not ARM EABI's: i386 aligns 64-bit fields to 4,
++ * ARM EABI to 8. For the ioctls whose payload differs (bridge_ioctl_fixup()):
++ *  - where ARM's layout is x86-64's native one (only fixed-width fields), the ioctl goes to the
++ *    kernel natively, not through the bridge: the ARM command number is the native one;
++ *  - where it is neither (a long or a 32-bit timespec next to a 64-bit field), the payload is
++ *    repacked in place to i386's layout, which is smaller, the i386 command run through the
++ *    bridge, and the result repacked to ARM's.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#define HOST_NR_compat_bridge 0x7ff0
++#define I386_NR_read 3
++#define I386_NR_write 4
++#define I386_NR_ioctl 54
++#define I386_NR_readv 145
++#define I386_NR_writev 146
++#define I386_NR_set_robust_list 311
++#define I386_NR_get_robust_list 312
++
++static bool bridge_on;
++
++void bridge_init(void)
++{
++    const char *e = getenv("QEMU_BRIDGE");
++    bool asked = e && e[0] == '1';
++    long r;
++
++    if (e && e[0] == '0') {
++        return;
++    }
++    if (guest_base != 0) {
++        if (asked) {
++            fprintf(stderr, "qemu: ioctl bridge needs guest_base 0 (have 0x%lx); off\n",
++                    (unsigned long)guest_base);
++        }
++        return;
++    }
++    /* the kernel has the call if an ioctl on a bad descriptor gives EBADF through it */
++    r = syscall(HOST_NR_compat_bridge, I386_NR_ioctl, -1, 0, 0, 0, 0);
++    if (r != -1 || errno != EBADF) {
++        if (asked) {
++            fprintf(stderr, "qemu: the kernel has no ioctl bridge (%s); off\n",
++                    r == -1 ? strerror(errno) : "wrong answer");
++        }
++        return;
++    }
++    bridge_on = true;
++}
++
++static bool bridge_fd_translated(abi_long fd)
++{
++    return fd_trans_target_to_host_data(fd) || fd_trans_host_to_target_data(fd)
++        || fd_trans_target_to_host_addr(fd);
++}
++
++static abi_long bridge_ret(long r)
++{
++    return r == -1 ? -host_to_target_errno(errno) : (abi_long)r;
++}
++
++static abi_long bridge_call(int nr, abi_ulong a1, abi_ulong a2, abi_ulong a3)
++{
++    return bridge_ret(safe_syscall(HOST_NR_compat_bridge, nr, (uint32_t)a1, (uint32_t)a2,
++                                   (uint32_t)a3, 0, 0));
++}
++
++/* ARM EABI ioctl numbers whose payload is laid out unlike i386's */
++#define ARM_IOC(dir, type, nr, size) \
++    ((uint32_t)(((dir) << 30) | ((size) << 16) | ((type) << 8) | (nr)))
++#define RW 3u
++#define RD 2u
++#define WR 1u
++/* ARM layout = x86-64 native layout: run natively */
++#define ARM_VIDIOC_ENUMSTD               ARM_IOC(RW, 'V', 25, 72)
++#define ARM_VIDIOC_ENUMINPUT             ARM_IOC(RW, 'V', 26, 80)
++#define ARM_DRM_IOCTL_UPDATE_DRAW        ARM_IOC(WR, 'd', 0x3f, 24)
++#define ARM_DRM_IOCTL_MODE_GETPLANERES   ARM_IOC(RW, 'd', 0xb5, 16)
++#define ARM_DRM_IOCTL_MODE_ADDFB2        ARM_IOC(RW, 'd', 0xb8, 104)
++#define ARM_DRM_IOCTL_MODE_OBJ_GETPROPS  ARM_IOC(RW, 'd', 0xb9, 32)
++#define ARM_DRM_IOCTL_MODE_OBJ_SETPROP   ARM_IOC(RW, 'd', 0xba, 24)
++#define ARM_DRM_IOCTL_MODE_GETFB2        ARM_IOC(RW, 'd', 0xce, 104)
++/* neither: repacked to i386's (u64 alignment 4) */
++#define ARM_SNDRV_CTL_IOCTL_ELEM_READ    ARM_IOC(RW, 'U', 0x12, 712)
++#define ARM_SNDRV_CTL_IOCTL_ELEM_WRITE   ARM_IOC(RW, 'U', 0x13, 712)
++#define I386_SNDRV_CTL_IOCTL_ELEM_READ   ARM_IOC(RW, 'U', 0x12, 708)
++#define I386_SNDRV_CTL_IOCTL_ELEM_WRITE  ARM_IOC(RW, 'U', 0x13, 708)
++#define ARM_VIDIOC_DQEVENT               ARM_IOC(RD, 'V', 89, 128)
++#define I386_VIDIOC_DQEVENT              ARM_IOC(RD, 'V', 89, 120)
++
++/* snd_ctl_elem_value: id (64) and indirect (4); the value union (512) and reserved (128) at
++ * 72 on ARM, at 68 on i386. v4l2_event: type (4); the union (64) and the rest (56) at 8 on
++ * ARM, at 4 on i386. */
++static abi_long bridge_repacked(abi_long fd, uint32_t cmd, abi_ulong arg, size_t arm_size,
++                                size_t head, size_t tail, bool in)
++{
++    uint8_t *p = lock_user(VERIFY_WRITE, arg, arm_size, 1);
++    abi_long ret;
++
++    if (!p) {
++        return -TARGET_EFAULT;
++    }
++    if (in) {
++        memmove(p + head, p + head + 4, tail);
++    }
++    ret = bridge_call(I386_NR_ioctl, fd, cmd, arg);
++    memmove(p + head + 4, p + head, tail);
++    memset(p + head, 0, 4);
++    unlock_user(p, arg, arm_size);
++    return ret;
++}
++
++/* true if the ioctl was handled here (with *ret), false to bridge it unchanged */
++static bool bridge_ioctl_fixup(abi_long fd, uint32_t cmd, abi_ulong arg, abi_long *ret)
++{
++    switch (cmd) {
++    case ARM_VIDIOC_ENUMSTD: case ARM_VIDIOC_ENUMINPUT: case ARM_DRM_IOCTL_UPDATE_DRAW:
++    case ARM_DRM_IOCTL_MODE_GETPLANERES: case ARM_DRM_IOCTL_MODE_ADDFB2:
++    case ARM_DRM_IOCTL_MODE_OBJ_GETPROPS: case ARM_DRM_IOCTL_MODE_OBJ_SETPROP:
++    case ARM_DRM_IOCTL_MODE_GETFB2: case ARM_SNDRV_CTL_IOCTL_ELEM_READ:
++    case ARM_SNDRV_CTL_IOCTL_ELEM_WRITE: case ARM_VIDIOC_DQEVENT:
++        /* once per command and process in dmesg (unimp-kmsg.c.inc), to see which are used */
++        qemu_log_mask(LOG_UNIMP, "bridge: ioctl %#x converted\n", cmd);
++        break;
++    }
++    switch (cmd) {
++    case ARM_VIDIOC_ENUMSTD:
++    case ARM_VIDIOC_ENUMINPUT:
++    case ARM_DRM_IOCTL_UPDATE_DRAW:
++    case ARM_DRM_IOCTL_MODE_GETPLANERES:
++    case ARM_DRM_IOCTL_MODE_ADDFB2:
++    case ARM_DRM_IOCTL_MODE_OBJ_GETPROPS:
++    case ARM_DRM_IOCTL_MODE_OBJ_SETPROP:
++    case ARM_DRM_IOCTL_MODE_GETFB2:
++        *ret = bridge_ret(safe_syscall(__NR_ioctl, fd, (unsigned long)cmd, (unsigned long)arg));
++        return true;
++    case ARM_SNDRV_CTL_IOCTL_ELEM_READ:
++        *ret = bridge_repacked(fd, I386_SNDRV_CTL_IOCTL_ELEM_READ, arg, 712, 68, 640, true);
++        return true;
++    case ARM_SNDRV_CTL_IOCTL_ELEM_WRITE:
++        *ret = bridge_repacked(fd, I386_SNDRV_CTL_IOCTL_ELEM_WRITE, arg, 712, 68, 640, true);
++        return true;
++    case ARM_VIDIOC_DQEVENT:
++        *ret = bridge_repacked(fd, I386_VIDIOC_DQEVENT, arg, 128, 4, 116, false);
++        return true;
++    }
++    return false;
++}
++
++/* true if the bridge ran the call, with its result in *ret */
++static bool bridge_syscall(int num, abi_long a1, abi_long a2, abi_long a3, abi_long *ret)
++{
++    int nr;
++
++    if (!bridge_on) {
++        return false;
++    }
++    switch (num) {
++    case TARGET_NR_ioctl:
++        if (bridge_ioctl_fixup(a1, (uint32_t)a2, a3, ret)) {
++            return true;
++        }
++        nr = I386_NR_ioctl;
++        break;
++    case TARGET_NR_read:
++        nr = I386_NR_read;
++        goto data;
++    case TARGET_NR_write:
++        nr = I386_NR_write;
++        goto data;
++    case TARGET_NR_readv:
++        nr = I386_NR_readv;
++        goto data;
++    case TARGET_NR_writev:
++        nr = I386_NR_writev;
++    data:
++        if (bridge_fd_translated(a1)) {
++            return false;
++        }
++        break;
++    case TARGET_NR_set_robust_list:
++        nr = I386_NR_set_robust_list;
++        break;
++    case TARGET_NR_get_robust_list:
++        nr = I386_NR_get_robust_list;
++        break;
++    default:
++        return false;
++    }
++    *ret = bridge_call(nr, a1, a2, a3);
++    if (*ret == -TARGET_ENOSYS) {
++        qemu_log_mask(LOG_UNIMP, "bridge: syscall %d: ENOSYS from the kernel\n", num);
++    }
++    return true;
++}
+diff --git a/linux-user/main.c b/linux-user/main.c
+index 6ace61a5..cc4ae667 100644
+--- a/linux-user/main.c
++++ b/linux-user/main.c
+@@ -1032,7 +1032,7 @@ int main(int argc, char **argv, char **envp)
+        the real value of GUEST_BASE into account.  */
+     tcg_prologue_init();
+ 
+-#ifdef QEMU_COMPAT_BRIDGE
++#if defined(QEMU_COMPAT_BRIDGE) || defined(QEMU_IOCTL_BRIDGE)
+     bridge_init();
+ #endif
+     target_cpu_copy_regs(env, regs);
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index 4896c37a..22ef3b82 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -13881,6 +13881,9 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
+ #ifdef QEMU_COMPAT_BRIDGE
+ #include "compat-bridge.c.inc"
+ #endif
++#ifdef QEMU_IOCTL_BRIDGE
++#include "ioctl-bridge.c.inc"
++#endif
+ 
+ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
+                     abi_long arg2, abi_long arg3, abi_long arg4,
+@@ -13913,6 +13916,9 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
+ 
+ #ifdef QEMU_COMPAT_BRIDGE
+     if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, &ret))
++#endif
++#ifdef QEMU_IOCTL_BRIDGE
++    if (!bridge_syscall(num, arg1, arg2, arg3, &ret))
+ #endif
+     ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
+                       arg5, arg6, arg7, arg8);
+diff --git a/linux-user/user-internals.h b/linux-user/user-internals.h
+index 0c0f9479..9611217c 100644
+--- a/linux-user/user-internals.h
++++ b/linux-user/user-internals.h
+@@ -28,6 +28,11 @@ extern char *exec_path;
+ #define QEMU_COMPAT_BRIDGE
+ void bridge_init(void);
+ #endif
++/* the ioctl bridge (ioctl-bridge.c.inc): a 32-bit ARM guest on an x86-64 host */
++#if defined(TARGET_ARM) && !defined(TARGET_AARCH64) && defined(__x86_64__)
++#define QEMU_IOCTL_BRIDGE
++void bridge_init(void);
++#endif
+ void init_task_state(TaskState *ts);
+ void task_settid(TaskState *);
+ void stop_all_tasks(void);
