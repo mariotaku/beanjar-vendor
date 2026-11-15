@@ -40,10 +40,11 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   those whose meaning depends on a 32-bit caller: every ioctl, `read`, `write`, `readv` and
   `writev` on a descriptor qemu does not translate, the robust futex list, and `getdents`,
   `getdents64`, `lseek` and `_llseek`, for which ext4 sizes directory offsets for the caller (a
-  32-bit glibc's `readdir` fails with EOVERFLOW on 64-bit ones). i386 aligns 64-bit
-  fields to 4 where ARM EABI aligns them to 8: the ioctls whose ARM layout is x86-64's native one
-  run natively, and SNDRV_CTL `ELEM_READ`/`ELEM_WRITE` and `VIDIOC_DQEVENT` are repacked to
-  i386's layout and back (`linux-user/ioctl-bridge.c.inc`). `QEMU_BRIDGE` works as for `0001`.
+  32-bit glibc's `readdir` fails with EOVERFLOW on 64-bit ones). i386 aligns 64-bit fields to 4
+  where ARM EABI aligns them to 8: the ioctls whose ARM layout is x86-64's native one run natively,
+  and SNDRV_CTL `ELEM_READ`/`ELEM_WRITE` are repacked to i386's layout and back
+  (`linux-user/ioctl-bridge.c.inc`). `VIDIOC_DQEVENT` goes through unchanged: Beanjar's emulated
+  LG V4L2 nodes take ARM's layout, as on the arm64 kernel. `QEMU_BRIDGE` works as for `0001`.
 - `0003` linux-user: `/proc/<pid>/cmdline` and `environ` are the guest's argv and envp, as after
   a native exec, instead of `qemu-arm <path> <argv...>`: programs that find a peer by its command
   line (webOS's `initctl`, which notifies systemd for a service it finds that way) see the
@@ -51,6 +52,10 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   `prctl(PR_SET_MM, PR_SET_MM_MAP)`, which needs no capability on a kernel with
   `CONFIG_CHECKPOINT_RESTORE` (Beanjar's guest kernels have it); elsewhere nothing changes. It
   works with or without the bridge.
+- `0004` linux-user: `/proc/self/status` and `statm` count the guest program's memory (its
+  mappings' sizes and their resident pages from the host's `smaps`) instead of the whole qemu
+  process's, whose TCG code buffer and heap made webOS's iconnectivity, which aborts when its own
+  `VmRSS` passes a limit, abort at start. Another process reading them still sees qemu's.
 
 ## The tarball
 

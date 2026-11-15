@@ -21,8 +21,12 @@ The x86-64 kernel's compat layer is i386's, which aligns 64-bit fields to
 4 where ARM EABI aligns them to 8. The ioctls whose ARM layout is the
 x86-64 native one (VIDIOC_ENUMSTD and ENUMINPUT, DRM UPDATE_DRAW,
 GETPLANERESOURCES, ADDFB2, OBJ_GETPROPERTIES, OBJ_SETPROPERTY, GETFB2) run
-natively; SNDRV_CTL ELEM_READ and ELEM_WRITE and VIDIOC_DQEVENT are
-repacked in place to i386's layout and back.
+natively; SNDRV_CTL ELEM_READ and ELEM_WRITE (the kernel's ALSA core) are
+repacked in place to i386's layout and back. VIDIOC_DQEVENT goes through
+the bridge unchanged: its users are Beanjar's emulated LG V4L2 nodes,
+which take ARM's 128-byte v4l2_event as on the arm64 kernel (repacked to
+i386's, lgemu's v4l2-vsc answered ENOTTY and webOS 23's avmutemanager
+spun on it).
 
 As with the aarch64 compat bridge it needs guest_base 0; it is on when the
 kernel answers the call, off otherwise or with QEMU_BRIDGE=0, and
@@ -30,10 +34,10 @@ QEMU_BRIDGE=1 says on stderr why it could not be turned on.
 ---
 diff --git a/linux-user/ioctl-bridge.c.inc b/linux-user/ioctl-bridge.c.inc
 new file mode 100644
-index 000000000..04ee4d20a
+index 000000000..c8cff7c27
 --- /dev/null
 +++ b/linux-user/ioctl-bridge.c.inc
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,226 @@
 +/*
 + * The ioctl bridge: a 32-bit ARM guest on an x86-64 host whose kernel has Beanjar's x86
 + * compat_bridge system call (0x7ff0: one i386 compat call, with TS_COMPAT set for that call
@@ -55,7 +59,8 @@ index 000000000..04ee4d20a
 + *    kernel natively, not through the bridge: the ARM command number is the native one;
 + *  - where it is neither (a long or a 32-bit timespec next to a 64-bit field), the payload is
 + *    repacked in place to i386's layout, which is smaller, the i386 command run through the
-+ *    bridge, and the result repacked to ARM's.
++ *    bridge, and the result repacked to ARM's (SNDRV_CTL ELEM_READ/WRITE, for the kernel's
++ *    ALSA core).
 + *
 + * SPDX-License-Identifier: GPL-2.0-or-later
 + */
@@ -141,12 +146,12 @@ index 000000000..04ee4d20a
 +#define ARM_SNDRV_CTL_IOCTL_ELEM_WRITE   ARM_IOC(RW, 'U', 0x13, 712)
 +#define I386_SNDRV_CTL_IOCTL_ELEM_READ   ARM_IOC(RW, 'U', 0x12, 708)
 +#define I386_SNDRV_CTL_IOCTL_ELEM_WRITE  ARM_IOC(RW, 'U', 0x13, 708)
-+#define ARM_VIDIOC_DQEVENT               ARM_IOC(RD, 'V', 89, 128)
-+#define I386_VIDIOC_DQEVENT              ARM_IOC(RD, 'V', 89, 120)
 +
 +/* snd_ctl_elem_value: id (64) and indirect (4); the value union (512) and reserved (128) at
-+ * 72 on ARM, at 68 on i386. v4l2_event: type (4); the union (64) and the rest (56) at 8 on
-+ * ARM, at 4 on i386. */
++ * 72 on ARM, at 68 on i386. VIDIOC_DQEVENT is not repacked: the guest's V4L2 nodes that use it
++ * are Beanjar's emulated LG devices (lgemu's v4l2-vsc, rtk-vsc, webos_tv), which take ARM's
++ * 128-byte v4l2_event as on the arm64 kernel, so it goes through the bridge unchanged; a V4L2
++ * core driver would want i386's 120 bytes and answers ENOTTY instead. */
 +static abi_long bridge_repacked(abi_long fd, uint32_t cmd, abi_ulong arg, size_t arm_size,
 +                                size_t head, size_t tail, bool in)
 +{
@@ -174,7 +179,7 @@ index 000000000..04ee4d20a
 +    case ARM_DRM_IOCTL_MODE_GETPLANERES: case ARM_DRM_IOCTL_MODE_ADDFB2:
 +    case ARM_DRM_IOCTL_MODE_OBJ_GETPROPS: case ARM_DRM_IOCTL_MODE_OBJ_SETPROP:
 +    case ARM_DRM_IOCTL_MODE_GETFB2: case ARM_SNDRV_CTL_IOCTL_ELEM_READ:
-+    case ARM_SNDRV_CTL_IOCTL_ELEM_WRITE: case ARM_VIDIOC_DQEVENT:
++    case ARM_SNDRV_CTL_IOCTL_ELEM_WRITE:
 +        /* once per command and process in dmesg (unimp-kmsg.c.inc), to see which are used */
 +        qemu_log_mask(LOG_UNIMP, "bridge: ioctl %#x converted\n", cmd);
 +        break;
@@ -195,9 +200,6 @@ index 000000000..04ee4d20a
 +        return true;
 +    case ARM_SNDRV_CTL_IOCTL_ELEM_WRITE:
 +        *ret = bridge_repacked(fd, I386_SNDRV_CTL_IOCTL_ELEM_WRITE, arg, 712, 68, 640, true);
-+        return true;
-+    case ARM_VIDIOC_DQEVENT:
-+        *ret = bridge_repacked(fd, I386_VIDIOC_DQEVENT, arg, 128, 4, 116, false);
 +        return true;
 +    }
 +    return false;
