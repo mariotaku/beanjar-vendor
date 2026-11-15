@@ -8,19 +8,11 @@
 name: testguest
 
 on:
+  # Buildroot takes 25 to 40 minutes and the userland rarely changes, so it builds for a release
+  # (the tag) and on request (workflow_dispatch, e.g. on a branch before tagging), not on every push.
   push:
-    branches:
-      - "**"
     tags:
       - "testguest-*"
-    # path filters are not evaluated for tags
-    paths:
-      - "testguest/**"
-      - ".github/workflows/testguest.yml"
-  pull_request:
-    paths:
-      - "testguest/**"
-      - ".github/workflows/testguest.yml"
   workflow_dispatch:
 
 permissions:

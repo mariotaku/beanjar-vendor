@@ -94,7 +94,9 @@ filesystem. Running it takes an ARM guest with a virtio GPU, which Beanjar's own
 
 The workflow (`.github/workflows/testguest.yml`) runs `testguest/build.sh` in a `debian:trixie`
 container on GitHub's amd64 runner, keeping Buildroot's downloads and ccache between runs. Every
-run uploads the two tarballs as the artifact `beanjar-testguest-armel`.
+run uploads the two tarballs as the artifact `beanjar-testguest-armel`. A build takes 25 to 40
+minutes and the userland rarely changes, so the workflow runs only for a release tag and on
+request: try a change on a branch with `gh workflow run testguest.yml --ref <branch>`.
 
 To release, push a tag `testguest-<version>` matching `VERSION`, for example
 `testguest-2026.02.3+beanjar2`; a tag that does not match fails the build. The workflow publishes a
