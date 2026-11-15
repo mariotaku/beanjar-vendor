@@ -1,0 +1,187 @@
+From dda81a46ad5a95829d2a0ab10f57e0242b1e2d39 Mon Sep 17 00:00:00 2001
+From: Ngo Quoc Dat <datlechin@gmail.com>
+Date: Wed, 11 Nov 2026 11:41:17 +0700
+Subject: [PATCH 7/7] vrend: take the closest wrap mode an OpenGL ES host has
+
+Gallium has no cap for PIPE_TEX_WRAP_CLAMP_TO_BORDER, so Mesa's virgl
+driver sends it to any host. OpenGL ES has GL_CLAMP_TO_BORDER from 3.2 or
+with EXT or OES_texture_border_clamp, and ANGLE on Metal, an ES 3.0 host,
+has neither: creating such a sampler state raised GL_INVALID_ENUM and
+ended the guest's context. Xorg's glamor and Chromium's GPU process make
+one as they start, so on that host both stopped drawing.
+
+On a GLES host without it, CLAMP_TO_BORDER now takes CLAMP_TO_EDGE, which
+samples the edge texels where the border color would be. The mirror
+clamp modes, which GLES has only as GL_EXT_texture_mirror_clamp_to_edge,
+take that mode where the host has it and mirrored repeat where it does
+not, instead of failing the context. Both are GLES warnings, as vrend's
+other stand-ins for what GLES lacks are. Desktop GL hosts are unchanged.
+
+The test makes and binds a sampler state of each wrap mode a guest can
+send and checks that its context goes on.
+
+Signed-off-by: Ngo Quoc Dat <datlechin@gmail.com>
+---
+ src/vrend/vrend_renderer.c | 28 +++++++++++++++++-
+ tests/test_virgl_cmd.c     | 59 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 86 insertions(+), 1 deletion(-)
+
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 90306216..d9f51371 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -1279,6 +1279,7 @@ static void __report_core_warn(const char *fname, struct vrend_context *ctx,
+ #define GLES_WARN_LOGIC_OP 15
+ #define GLES_WARN_TIMESTAMP 16
+ #define GLES_WARN_IMPLICIT_MSAA_SURFACE 17
++#define GLES_WARN_TEXTURE_WRAP 18
+ 
+ ASSERTED
+ static const char *vrend_gles_warn_strings[] = {
+@@ -1298,6 +1299,7 @@ static const char *vrend_gles_warn_strings[] = {
+    [GLES_WARN_LOGIC_OP]              = "LogicOp",
+    [GLES_WARN_TIMESTAMP]             = "GL_TIMESTAMP",
+    [GLES_WARN_IMPLICIT_MSAA_SURFACE] = "Implicit MSAA Surface",
++   [GLES_WARN_TEXTURE_WRAP]          = "Texture Wrap",
+ };
+ 
+ static void __report_gles_warn(ASSERTED const char *fname,
+@@ -2655,6 +2657,17 @@ static void vrend_destroy_dsa_object(void *obj_ptr)
+    FREE(state);
+ }
+ 
++/* GLES has no mirror clamp mode but the one of
++ * GL_EXT_texture_mirror_clamp_to_edge, which mirrors once as the others do;
++ * without it, mirrored repeat is the closest. */
++static GLuint convert_wrap_gles_mirror_clamp(struct vrend_context *ctx)
++{
++   report_gles_warn(ctx, GLES_WARN_TEXTURE_WRAP);
++   if (has_feature(feat_texture_mirror_clamp_to_edge))
++      return GL_MIRROR_CLAMP_TO_EDGE_EXT;
++   return GL_MIRRORED_REPEAT;
++}
++
+ static GLuint convert_wrap(struct vrend_context *ctx, int wrap)
+ {
+    switch(wrap){
+@@ -2662,12 +2675,21 @@ static GLuint convert_wrap(struct vrend_context *ctx, int wrap)
+    case PIPE_TEX_WRAP_CLAMP: if (vrend_state.use_core_profile == false) return GL_CLAMP; else return GL_CLAMP_TO_EDGE;
+ 
+    case PIPE_TEX_WRAP_CLAMP_TO_EDGE: return GL_CLAMP_TO_EDGE;
+-   case PIPE_TEX_WRAP_CLAMP_TO_BORDER: return GL_CLAMP_TO_BORDER;
++   case PIPE_TEX_WRAP_CLAMP_TO_BORDER:
++      /* GLES has it from 3.2 or with the extensions that also bring the
++       * sampler border colors. */
++      if (vrend_state.use_gles && !has_feature(feat_sampler_border_colors)) {
++         report_gles_warn(ctx, GLES_WARN_TEXTURE_WRAP);
++         return GL_CLAMP_TO_EDGE;
++      }
++      return GL_CLAMP_TO_BORDER;
+ 
+    case PIPE_TEX_WRAP_MIRROR_REPEAT: return GL_MIRRORED_REPEAT;
+    case PIPE_TEX_WRAP_MIRROR_CLAMP:
+       if (has_feature(feat_texture_mirror_clamp))
+          return GL_MIRROR_CLAMP_EXT;
++      else if (vrend_state.use_gles)
++         return convert_wrap_gles_mirror_clamp(ctx);
+       else {
+           vrend_report_context_error(ctx, VIRGL_ERROR_CTX_UNSUPPORTED_TEX_WRAP, wrap);
+           return GL_MIRRORED_REPEAT;
+@@ -2675,6 +2697,8 @@ static GLuint convert_wrap(struct vrend_context *ctx, int wrap)
+    case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE:
+       if (has_feature(feat_texture_mirror_clamp_to_edge))
+          return GL_MIRROR_CLAMP_TO_EDGE_EXT;
++      else if (vrend_state.use_gles)
++         return convert_wrap_gles_mirror_clamp(ctx);
+       else {
+          vrend_report_context_error(ctx, VIRGL_ERROR_CTX_UNSUPPORTED_TEX_WRAP, wrap);
+          return GL_MIRRORED_REPEAT;
+@@ -2682,6 +2706,8 @@ static GLuint convert_wrap(struct vrend_context *ctx, int wrap)
+    case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_BORDER:
+       if (has_feature(feat_texture_mirror_clamp_to_border)) {
+          return GL_MIRROR_CLAMP_TO_BORDER_EXT;
++      } else if (vrend_state.use_gles) {
++         return convert_wrap_gles_mirror_clamp(ctx);
+       } else {
+          vrend_report_context_error(ctx, VIRGL_ERROR_CTX_UNSUPPORTED_TEX_WRAP, wrap);
+          return GL_MIRRORED_REPEAT;
+diff --git a/tests/test_virgl_cmd.c b/tests/test_virgl_cmd.c
+index c6299212..67adf23c 100644
+--- a/tests/test_virgl_cmd.c
++++ b/tests/test_virgl_cmd.c
+@@ -1612,6 +1612,64 @@ START_TEST(virgl_decode_bind_sampler_states)
+ }
+ END_TEST
+ 
++static bool host_is_gles(void)
++{
++   uint32_t max_ver, max_size;
++   struct virgl_caps_v2 *caps;
++   bool is_gles;
++
++   /* capability set 2, VIRGL2 */
++   virgl_renderer_get_cap_set(2, &max_ver, &max_size);
++   caps = calloc(1, max_size);
++   virgl_renderer_fill_caps(2, max_ver, caps);
++   is_gles = caps->capability_bits & VIRGL_CAP_HOST_IS_GLES;
++   free(caps);
++   return is_gles;
++}
++
++/* A sampler state of each wrap mode leaves its context working. Guests use
++ * CLAMP_TO_BORDER on any host, which GLES has from 3.2 or with
++ * texture_border_clamp, and the mirror clamp modes where the host has them;
++ * a GLES host takes the closest mode it has for each of them. */
++START_TEST(virgl_test_sampler_state_wrap_modes)
++{
++   uint32_t nop = VIRGL_CMD0(VIRGL_CCMD_NOP, 0, 0);
++   struct virgl_context ctx;
++   unsigned last;
++   int ret;
++
++   ret = testvirgl_init_ctx_cmdbuf(&ctx, context_flags);
++   ck_assert_int_eq(ret, 0);
++   ret = virgl_renderer_context_create(2, strlen("test2"), "test2");
++   ck_assert_int_eq(ret, 0);
++   last = host_is_gles() ? PIPE_TEX_WRAP_MIRROR_CLAMP_TO_BORDER : PIPE_TEX_WRAP_MIRROR_REPEAT;
++
++   for (unsigned wrap = PIPE_TEX_WRAP_REPEAT; wrap <= last; wrap++) {
++      struct pipe_sampler_state state;
++      uint32_t handle = wrap + 1;
++
++      memset(&state, 0, sizeof(state));
++      state.wrap_s = state.wrap_t = state.wrap_r = wrap;
++      state.min_mip_filter = PIPE_TEX_MIPFILTER_NONE;
++      state.max_lod = 1000.0f;
++      state.border_color.f[3] = 1.0f;
++      virgl_encode_sampler_state(&ctx, handle, &state);
++      ret = testvirgl_ctx_send_cmdbuf(&ctx);
++      ck_assert_int_eq(ret, 0);
++
++      /* vrend looks at a context's error as it switches to the context. */
++      ret = virgl_renderer_submit_cmd(&nop, 2, 1);
++      ck_assert_int_eq(ret, 0);
++      virgl_encode_bind_sampler_states(&ctx, PIPE_SHADER_FRAGMENT, 0, 1, &handle);
++      ret = testvirgl_ctx_send_cmdbuf(&ctx);
++      ck_assert_int_eq(ret, 0);
++   }
++
++   virgl_renderer_context_destroy(2);
++   testvirgl_fini_ctx_cmdbuf(&ctx);
++}
++END_TEST
++
+ START_TEST(virgl_test_encode_sampler_view)
+ {
+    struct virgl_context ctx;
+@@ -2353,6 +2411,7 @@ static Suite *virgl_init_suite(void)
+   tcase_add_test(tc_core, virgl_decode_set_scissor_state);
+   tcase_add_test(tc_core, virgl_decode_set_constant_buffer);
+   tcase_add_test(tc_core, virgl_decode_bind_sampler_states);
++  tcase_add_test(tc_core, virgl_test_sampler_state_wrap_modes);
+   tcase_add_test(tc_core, virgl_test_encode_sampler_view);
+   tcase_add_test(tc_core, virgl_test_encode_sampler_view_fail_layers);
+   tcase_add_test(tc_core, virgl_test_encode_sampler_view_texture_buffer);
+-- 
+2.47.3
+

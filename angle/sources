@@ -1,0 +1,2 @@
+angle https://chromium.googlesource.com/angle/angle.git 29d18232e8031430f1257b7509ceca20d195114d
+depot_tools https://chromium.googlesource.com/chromium/tools/depot_tools.git ec77017fb3e090ff02bffb9c6980ebcdd3006ddc

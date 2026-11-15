@@ -1,0 +1,13 @@
+ANGLE, as built by beanjar-vendor (angle/)
+
+These libraries are ANGLE (https://chromium.googlesource.com/angle/angle) at the commit named in
+BUILDINFO, built unchanged with its Metal backend by beanjar-vendor's angle/build.sh, with the
+third-party code ANGLE's DEPS file pins at that commit.
+
+ANGLE is licensed under the BSD 3-Clause licence (LICENSE). Copyright The ANGLE Project Authors.
+The third-party code compiled into the libraries is under the licences in its own directories of
+the ANGLE checkout; LICENSE-* files here carry those of the parts linked in, as build.sh lists
+them.
+
+The build script is licensed under the GNU General Public License, version 2 or (at your option)
+any later version. Copyright Mariotaku <git@mariotaku.me> and the Beanjar contributors.
