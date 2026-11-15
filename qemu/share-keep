@@ -7,12 +7,21 @@
 # -softmmu) that need it; a file without targets is kept for every target. A comment above each
 # entry says which device or option loads it.
 #
-# Measured on a webOS VM booted to the Home screen and stopped under strace: the arm64 virt
-# machine boots with -kernel, so no firmware (-bios, edk2, pflash), and its devices have no option
-# ROM except the NIC's. QEMU's own descriptors (firmware/*.json), keymaps (VNC, curses and
-# input-barrier only), trace-events-all (read by tracing scripts, not QEMU) and the other targets'
-# firmware are not loaded.
+# Measured with strace on webOS VMs: on aarch64 a VM booted to the Home screen and stopped, on
+# x86_64 a q35 boot with the launcher's devices. The arm64 virt machine boots with -kernel, so no
+# firmware (-bios, edk2, pflash), and its devices have no option ROM except the NIC's. QEMU's own
+# descriptors (firmware/*.json), keymaps (VNC, curses and input-barrier only), trace-events-all
+# (read by tracing scripts, not QEMU) and the other targets' firmware are not loaded; nor are VGA
+# BIOSes, since the launcher's x86-64 VMs run with -vga none.
 
 # virtio-net-pci's option ROM (its romfile property): QEMU refuses to create the device without
 # it, whether or not the guest has firmware to run it
 efi-virtio.rom
+
+# q35's firmware, SeaBIOS: loaded as the machine's BIOS at every start
+bios-256k.bin x86_64
+# The option ROM through which SeaBIOS boots -kernel (with fw_cfg DMA)
+linuxboot_dma.bin x86_64
+# KVM's TPR-access patching ROM (kvm-apic), loaded under KVM; not opened under TCG, kept so a KVM
+# start never lacks it
+kvmvapic.bin x86_64
