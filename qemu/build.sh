@@ -10,11 +10,12 @@
 # VERSION holds the version, QEMU's upstream version plus a Beanjar revision (10.0.2+beanjar1).
 # Its upstream part names the release tarball, downloaded from qemu.org and checked against
 # qemu.sha256. patches/*.patch are applied in order, and QEMU is configured for aarch64-softmmu
-# with only what Beanjar's launcher uses. QEMU finds its data relative to its program, and the
-# launcher passes -L anyway, so the configure prefix (/qemu) is not used at run time. The result
-# is OUT/qemu-<version>-<arch>.tar.xz, the layout of QEMU's installed prefix:
+# (and, on amd64, x86_64-softmmu for Beanjar's experimental x86-64 guest kernel) with only what
+# Beanjar's launcher uses. QEMU finds its data relative to its program, and the launcher passes -L
+# anyway, so the configure prefix (/qemu) is not used at run time. The result is OUT/qemu-<version>-<arch>.tar.xz, the layout of QEMU's installed prefix:
 #
 #   bin/qemu-system-aarch64    stripped
+#   bin/qemu-system-x86_64     stripped, amd64 only
 #   libexec/vhost-user-gpu     QEMU's own vhost-user GPU backend, stripped
 #   share/qemu/                QEMU's data directory (firmware images, keymaps), without the
 #                              vhost-user JSON, which names the configure prefix
@@ -44,6 +45,14 @@ version=$(cat "$TOP/VERSION")
 upstream=${version%%+beanjar*}
 [ "$upstream" != "$version" ] || die "VERSION $version is not <QEMU version>+beanjar<N>"
 t0=$(date +%s)
+# the emulators: Beanjar's arm64 guest everywhere; on amd64 also the x86-64 guest kernel's (q35 with
+# KVM), whose 32-bit ARM userland runs under qemu-user's qemu-arm
+targets=aarch64-softmmu
+systems=bin/qemu-system-aarch64
+if [ "$arch" = amd64 ]; then
+	targets=$targets,x86_64-softmmu
+	systems="$systems bin/qemu-system-x86_64"
+fi
 
 step "build dependencies"
 apt-get update
@@ -82,13 +91,13 @@ export SOURCE_DATE_EPOCH
 cp "$DL/$f" "$OUT/$f"
 
 step "configure"
-# Only aarch64-softmmu, with what the launcher uses: OpenGL/virglrenderer for virtio-gpu-gl,
-# egl-headless and the D-Bus display (and its audio backend), GBM, slirp, virtio-9p, PNG for the
+# aarch64-softmmu (and x86_64-softmmu on amd64), with what the launcher uses: OpenGL/virglrenderer
+# for virtio-gpu-gl, egl-headless and the D-Bus display (and its audio backend), GBM, slirp, virtio-9p, PNG for the
 # QMP screendump, usb-redir and usb-host. The tools option is the only one that builds
 # contrib/vhost-user-gpu; the other tools are left out of the tarball. No SDL/GTK/VNC/SPICE/
 # curses, host audio drivers, extra block drivers or crypto libraries. --disable-download: the
 # tarball carries the subprojects QEMU still needs.
-set -- --prefix="$PREFIX" --target-list=aarch64-softmmu --disable-download \
+set -- --prefix="$PREFIX" --target-list=$targets --disable-download \
 	--disable-modules --disable-docs --disable-user --enable-tools --disable-guest-agent \
 	--enable-opengl --enable-virglrenderer --enable-dbus-display \
 	--enable-slirp --enable-fdt=system --enable-virtfs --enable-attr --enable-pixman --enable-png \
@@ -111,13 +120,13 @@ STAGE=$SRC/stage
 make -C "$B" install DESTDIR="$STAGE" >/dev/null
 
 step "tree"
-# The two programs and the data directory only: QEMU's other tools, the vhost-user JSON (it names
+# The programs and the data directory only: QEMU's other tools, the vhost-user JSON (it names
 # the configure prefix, not where the backend ends up), the desktop file and icons stay out. The
 # tree is assembled where dpkg-shlibdeps expects a package's files, in a debhelper-like layout.
 SHL=$SRC/shlibdeps
 ROOT=$SHL/debian/beanjar-qemu
 mkdir -p "$ROOT/bin" "$ROOT/libexec" "$ROOT/share/doc/qemu"
-for p in bin/qemu-system-aarch64 libexec/vhost-user-gpu; do
+for p in $systems libexec/vhost-user-gpu; do
 	install -m 0755 "$STAGE$PREFIX/$p" "$ROOT/$p"
 	strip --strip-unneeded "$ROOT/$p"
 done
@@ -132,8 +141,8 @@ install -m 0644 "$TOP/NOTICE" "$ROOT/share/doc/qemu/NOTICE"
 # dpkg-shlibdeps finds the package's root by its DEBIAN directory
 mkdir "$ROOT/DEBIAN"
 printf 'Source: beanjar-qemu\n\nPackage: beanjar-qemu\nArchitecture: any\n' > "$SHL/debian/control"
-depends=$(cd "$SHL" && dpkg-shlibdeps -O -edebian/beanjar-qemu/bin/qemu-system-aarch64 \
-	-edebian/beanjar-qemu/libexec/vhost-user-gpu | sed -n 's/^shlibs:Depends=//p')
+depends=$(cd "$SHL" && dpkg-shlibdeps -O $(for p in $systems libexec/vhost-user-gpu; do
+	echo "-edebian/beanjar-qemu/$p"; done) | sed -n 's/^shlibs:Depends=//p')
 rmdir "$ROOT/DEBIAN"
 [ -n "$depends" ] || die "dpkg-shlibdeps reported no dependencies"
 {
@@ -143,7 +152,7 @@ rmdir "$ROOT/DEBIAN"
 	echo "Debian-Release: $(cat /etc/debian_version)"
 	echo "Prefix: $PREFIX"
 	echo "License: GPL-2.0-only"
-	echo "Programs: bin/qemu-system-aarch64 libexec/vhost-user-gpu"
+	echo "Programs: $systems libexec/vhost-user-gpu"
 	echo "Data: share/qemu"
 	echo "Sources:"
 	echo " $f $f_sha https://download.qemu.org/$f"

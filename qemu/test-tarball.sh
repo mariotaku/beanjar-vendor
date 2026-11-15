@@ -1,11 +1,11 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Check a QEMU tarball from build.sh where it is unpacked: run qemu-system-aarch64 with -L
-# pointing at the unpacked data directory, and check that it has the displays and devices
-# Beanjar's launcher uses (egl-headless and dbus; virtio-gpu-gl-pci, vhost-user-gpu-pci and
-# usb-redir), and that the vhost-user-gpu backend prints its capabilities. ldd must resolve every
-# library of both programs.
+# Check a QEMU tarball from build.sh where it is unpacked: run qemu-system-aarch64 (and the amd64
+# tarball's qemu-system-x86_64) with -L pointing at the unpacked data directory, and check that
+# each has the displays and devices Beanjar's launcher uses (egl-headless and dbus;
+# virtio-gpu-gl-pci, vhost-user-gpu-pci and usb-redir), and that the vhost-user-gpu backend prints its capabilities. ldd must resolve every
+# library of the programs.
 #
 #   qemu/test-tarball.sh TARBALL [DIR]     default DIR: a new directory next to TARBALL
 #
@@ -23,25 +23,33 @@ tar -C "$root" -xJf "$tarball"
 version=$(sed -n 's/^Version: //p' "$root/BUILDINFO")
 upstream=${version%%+beanjar*}
 
-qemu=$root/bin/qemu-system-aarch64
 gpu=$root/libexec/vhost-user-gpu
-for p in "$qemu" "$gpu"; do
+systems=$root/bin/qemu-system-aarch64
+arch=$(sed -n 's/^Architecture: //p' "$root/BUILDINFO")
+if [ "$arch" = amd64 ]; then
+	systems="$systems $root/bin/qemu-system-x86_64"
+fi
+for p in $systems "$gpu"; do
 	if ldd "$p" | grep 'not found'; then
 		die "$p: libraries not found"
 	fi
 done
 [ -f "$root/share/qemu/efi-virtio.rom" ] || die "no data directory in share/qemu"
+[ "$arch" != amd64 ] || [ -f "$root/share/qemu/bios-256k.bin" ] || die "no SeaBIOS in share/qemu"
 
-"$qemu" -L "$root/share/qemu" --version | tee "$DIR/version.txt"
-grep -q "^QEMU emulator version $upstream\b" "$DIR/version.txt" ||
-	die "qemu-system-aarch64 is not version $upstream"
-"$qemu" -L "$root/share/qemu" -display help > "$DIR/display.txt"
-for d in egl-headless dbus; do
-	grep -qx "$d" "$DIR/display.txt" || die "display $d missing: $(cat "$DIR/display.txt")"
-done
-"$qemu" -L "$root/share/qemu" -device help > "$DIR/device.txt"
-for d in virtio-gpu-gl-pci vhost-user-gpu-pci usb-redir; do
-	grep -q "^name \"$d\"" "$DIR/device.txt" || die "device $d missing"
+for qemu in $systems; do
+	name=$(basename "$qemu")
+	"$qemu" -L "$root/share/qemu" --version | tee "$DIR/$name-version.txt"
+	grep -q "^QEMU emulator version $upstream\b" "$DIR/$name-version.txt" ||
+		die "$name is not version $upstream"
+	"$qemu" -L "$root/share/qemu" -display help > "$DIR/$name-display.txt"
+	for d in egl-headless dbus; do
+		grep -qx "$d" "$DIR/$name-display.txt" || die "$name: display $d missing: $(cat "$DIR/$name-display.txt")"
+	done
+	"$qemu" -L "$root/share/qemu" -device help > "$DIR/$name-device.txt"
+	for d in virtio-gpu-gl-pci vhost-user-gpu-pci usb-redir; do
+		grep -q "^name \"$d\"" "$DIR/$name-device.txt" || die "$name: device $d missing"
+	done
 done
 "$gpu" --print-capabilities | tee "$DIR/capabilities.json"
 grep -q '"type": "gpu"' "$DIR/capabilities.json" || die "vhost-user-gpu capabilities"
