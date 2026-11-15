@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build the qemu-user tarballs (Beanjar's static qemu-arm with its bridge) with qemu-user/build.sh
-# in a debian:trixie container on arm64 and amd64, natively on each: the arm64 one runs inside
+# Build the qemu-user tarballs (Beanjar's static qemu-arm with its bridge, and on amd64 also
+# qemu-aarch64) with qemu-user/build.sh in a debian:trixie container on arm64 and amd64, natively
+# on each: the arm64 one runs inside
 # Beanjar's arm64 guest kernel on every host, the amd64 one inside the experimental x86-64 guest
 # kernel on amd64 hosts. Pushes and pull requests that touch qemu-user/ or this workflow only check
 # that they build; a manual run uploads the tarballs as workflow artifacts. Pushing a tag
@@ -106,5 +107,5 @@ jobs:
           sha256sum "$@" > SHA256SUMS
           cat SHA256SUMS
           gh release create "$TAG" --verify-tag --title "$TAG" \
-            --notes "Beanjar's static qemu-arm (QEMU $version) with its bridge: arm64 for Beanjar's arm64 guest kernel, amd64 for the experimental x86-64 guest kernel, built by qemu-user/build.sh; see qemu-user/README.md. The QEMU tarball is the source, with the patches in this tag." \
+            --notes "Beanjar's static qemu-arm (QEMU $version) with its bridge: arm64 for Beanjar's arm64 guest kernel, amd64 (with qemu-aarch64 for 64-bit ARM programs) for the experimental x86-64 guest kernel, built by qemu-user/build.sh; see qemu-user/README.md. The QEMU tarball is the source, with the patches in this tag." \
             "$@" SHA256SUMS

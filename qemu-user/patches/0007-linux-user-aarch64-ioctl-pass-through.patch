@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 19:00:00 +0900
+Subject: [PATCH] linux-user: an AArch64 guest's unknown ioctls go to an
+ x86-64 kernel unchanged
+
+qemu-aarch64 answers ENOTTY for every ioctl without an entry in its table,
+which leaves out DRM, V4L2, ALSA and drivers' own ioctls. AArch64 and
+x86-64 are both LP64 with the same alignment and the same _IOC encoding, so
+an AArch64 program's ioctl payload is laid out as an x86-64 one: with guest
+addresses equal to host addresses (guest_base 0) the pointers in it are
+right too, and the kernel can run the ioctl as the guest asked it. Do that
+for the ioctls qemu does not know; those it knows are converted as before.
+With another guest_base nothing changes.
+
+The kernel log lines of unimp-kmsg.c.inc name the emulator that wrote them
+(qemu-arm, qemu-aarch64).
+---
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index e06188ebb..34f3d4ead 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -5657,6 +5657,16 @@ static abi_long do_ioctl(int fd, int cmd, abi_long arg)
+     ie = ioctl_entries;
+     for(;;) {
+         if (ie->target_cmd == 0) {
++#ifdef QEMU_IOCTL_PASSTHROUGH
++            /*
++             * The guest's layout is the host's, and with guest_base 0 so are the pointers in
++             * its structures: the kernel runs the ioctl as the guest asked it (DRM, evdev,
++             * V4L2, ALSA, drivers' own), as a native AArch64 kernel would.
++             */
++            if (guest_base == 0) {
++                return get_errno(safe_ioctl(fd, (unsigned int)cmd, g2h_untagged(arg)));
++            }
++#endif
+             qemu_log_mask(
+                 LOG_UNIMP, "Unsupported ioctl: cmd=0x%04lx\n", (long)cmd);
+             return -TARGET_ENOTTY;
+diff --git a/linux-user/unimp-kmsg.c.inc b/linux-user/unimp-kmsg.c.inc
+index ba797cb1e..a4ac05a6b 100644
+--- a/linux-user/unimp-kmsg.c.inc
++++ b/linux-user/unimp-kmsg.c.inc
+@@ -43,7 +43,7 @@ static void G_GNUC_PRINTF(1, 2) unimp_kmsg(const char *fmt, ...)
+     if (n && msg[n - 1] == '\n') {
+         msg[n - 1] = 0;
+     }
+-    n = snprintf(line, sizeof(line), "<7>qemu-arm[%d %s]: %s\n", getpid(),
++    n = snprintf(line, sizeof(line), "<7>qemu-" TARGET_NAME "[%d %s]: %s\n", getpid(),
+                  exec_path ? exec_path : "?", msg);
+     if (write(fd, line, n) < 0) {
+         /* nothing to do */
+diff --git a/linux-user/user-internals.h b/linux-user/user-internals.h
+index 9611217c4..43c5414b4 100644
+--- a/linux-user/user-internals.h
++++ b/linux-user/user-internals.h
+@@ -33,6 +33,14 @@ void bridge_init(void);
+ #define QEMU_IOCTL_BRIDGE
+ void bridge_init(void);
+ #endif
++/*
++ * A 64-bit ARM guest on an x86-64 host: both LP64 with the same alignment and the same ioctl
++ * number encoding, so an ioctl qemu has no table entry for goes to the kernel unchanged
++ * (do_ioctl()), which needs guest addresses equal to host addresses (guest_base 0).
++ */
++#if defined(TARGET_AARCH64) && defined(__x86_64__)
++#define QEMU_IOCTL_PASSTHROUGH
++#endif
+ void init_task_state(TaskState *ts);
+ void task_settid(TaskState *);
+ void stop_all_tasks(void);
