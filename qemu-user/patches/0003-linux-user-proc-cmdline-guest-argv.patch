@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 15:00:00 +0900
+Subject: [PATCH] linux-user: /proc/<pid>/cmdline is the guest's argv
+
+Run through binfmt_misc, a guest program's /proc/<pid>/cmdline and environ
+are its interpreter's: "qemu-arm <path> <argv...>". qemu fakes
+/proc/self/cmdline for the guest itself, but other processes read the
+kernel's, and programs that find a peer by its command line never match:
+webOS's initctl looks up the pid of the service it notifies systemd for
+that way, so every Type=notify service that is ready through it times out.
+
+After loading the program, point the kernel's arg_start..arg_end and
+env_start..env_end at the guest's argv and envp strings on the guest
+stack, as after a native exec, with prctl(PR_SET_MM, PR_SET_MM_MAP). That
+needs no capability when exe_fd is -1, only CONFIG_CHECKPOINT_RESTORE; it
+sets every field at once, so the others are this process's own, from
+/proc/self/stat and brk(0), read just before, before the guest's first
+instruction and while no other thread moves the brk. A guest rewriting its argv in place
+(setproctitle) shows as it would natively. On a kernel without it the
+call fails and nothing changes.
+---
+diff --git a/linux-user/main.c b/linux-user/main.c
+index cc4ae6672..e0521a84a 100644
+--- a/linux-user/main.c
++++ b/linux-user/main.c
+@@ -26,6 +26,7 @@
+ #include <sys/resource.h>
+ #include <sys/shm.h>
+ #include <linux/binfmts.h>
++#include <sys/prctl.h>
+ 
+ #include "qapi/error.h"
+ #include "qemu.h"
+@@ -692,6 +693,65 @@ static int parse_args(int argc, char **argv)
+     return optind;
+ }
+ 
++/*
++ * Make this process's /proc/<pid>/cmdline and environ the guest's argv and envp, as after a
++ * native exec: a binfmt_misc interpreter's are "qemu-arm <path> <argv...>", and programs that
++ * find a peer by its command line (webOS's initctl looks up the service it notifies systemd for
++ * that way) never match. PR_SET_MM_MAP needs no privilege where the kernel has
++ * CONFIG_CHECKPOINT_RESTORE, but it sets every field at once: the others are this process's
++ * own, from /proc/self/stat and brk(0). It runs before the guest's first instruction, while
++ * only this thread moves the brk. On a kernel without it nothing changes.
++ */
++static void proc_cmdline_follow_guest(const struct image_info *info)
++{
++#ifdef PR_SET_MM_MAP
++    struct prctl_mm_map map = { .exe_fd = (uint32_t)-1 };
++    unsigned long long f[52] = { 0 };
++    char buf[1024], *p, *save = NULL, *tok;
++    ssize_t n;
++    int fd, i;
++
++    if (info->arg_strings >= info->env_strings ||
++        info->env_strings >= info->file_string) {
++        return;
++    }
++    fd = open("/proc/self/stat", O_RDONLY | O_CLOEXEC);
++    if (fd < 0) {
++        return;
++    }
++    n = read(fd, buf, sizeof(buf) - 1);
++    close(fd);
++    if (n <= 0) {
++        return;
++    }
++    buf[n] = 0;
++    p = strrchr(buf, ')');
++    if (!p) {
++        return;
++    }
++    /* fields from 3 (state) on, numbered as in proc(5) */
++    for (i = 3, tok = strtok_r(p + 1, " ", &save); tok && i < 52;
++         i++, tok = strtok_r(NULL, " ", &save)) {
++        f[i] = strtoull(tok, NULL, 10);
++    }
++    if (i < 52) {
++        return;
++    }
++    map.start_code = f[26];
++    map.end_code = f[27];
++    map.start_stack = f[28];
++    map.start_data = f[45];
++    map.end_data = f[46];
++    map.start_brk = f[47];
++    map.brk = syscall(__NR_brk, 0);
++    map.arg_start = (uintptr_t)g2h_untagged(info->arg_strings);
++    map.arg_end = (uintptr_t)g2h_untagged(info->env_strings);
++    map.env_start = map.arg_end;
++    map.env_end = (uintptr_t)g2h_untagged(info->file_string);
++    prctl(PR_SET_MM, PR_SET_MM_MAP, &map, sizeof(map), 0);
++#endif
++}
++
+ int main(int argc, char **argv, char **envp)
+ {
+     struct target_pt_regs regs1, *regs = &regs1;
+@@ -992,6 +1052,8 @@ int main(int argc, char **argv, char **envp)
+ 
+     g_free(target_environ);
+ 
++    proc_cmdline_follow_guest(info);
++
+     if (qemu_loglevel_mask(CPU_LOG_PAGE)) {
+         FILE *f = qemu_log_trylock();
+         if (f) {

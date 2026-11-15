@@ -42,6 +42,13 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   fields to 4 where ARM EABI aligns them to 8: the ioctls whose ARM layout is x86-64's native one
   run natively, and SNDRV_CTL `ELEM_READ`/`ELEM_WRITE` and `VIDIOC_DQEVENT` are repacked to
   i386's layout and back (`linux-user/ioctl-bridge.c.inc`). `QEMU_BRIDGE` works as for `0001`.
+- `0003` linux-user: `/proc/<pid>/cmdline` and `environ` are the guest's argv and envp, as after
+  a native exec, instead of `qemu-arm <path> <argv...>`: programs that find a peer by its command
+  line (webOS's `initctl`, which notifies systemd for a service it finds that way) see the
+  program. qemu points the kernel's argument and environment range at the guest's strings with
+  `prctl(PR_SET_MM, PR_SET_MM_MAP)`, which needs no capability on a kernel with
+  `CONFIG_CHECKPOINT_RESTORE` (Beanjar's guest kernels have it); elsewhere nothing changes. It
+  works with or without the bridge.
 
 ## The tarball
 
