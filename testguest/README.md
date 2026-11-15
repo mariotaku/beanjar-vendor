@@ -48,16 +48,20 @@ alike. Releases up to `+beanjar1` were `armhf`, hard-float.
 any GCC for the triplet. `Target-Triplet` is `arm-linux-gnueabi`, and `Target-Flags` the CPU
 options Buildroot's wrapper passed (`Toolchain` names Buildroot's GCC, for the record). A program
 is compiled for the root filesystem with Debian's cross compiler (`gcc-arm-linux-gnueabi`, on
-amd64 or arm64):
+amd64 or arm64). That compiler is not built for a sysroot: `--sysroot` alone leaves its own tool
+directory (`/usr/arm-linux-gnueabi`, where Debian's armel C library is when
+`libc6-dev-armel-cross` is installed) ahead of the sysroot, so the sysroot is put first by hand:
 
 ```sh
-<Target-Triplet>-gcc --sysroot=<tree>/sysroot <Target-Flags> ...
+S=<tree>/sysroot
+arm-linux-gnueabi-gcc --sysroot=$S -nostdinc -isystem "$(arm-linux-gnueabi-gcc -print-file-name=include)" \
+    -isystem $S/usr/include -B$S/usr/lib/ -B$S/lib/ -L$S/lib -L$S/usr/lib \
+    -Wl,-rpath-link,$S/lib:$S/usr/lib <Target-Flags> ...
 ```
 
-and pkg-config with `PKG_CONFIG_SYSROOT_DIR=<tree>/sysroot` and
-`PKG_CONFIG_LIBDIR=<tree>/sysroot/usr/lib/pkgconfig`. With `--sysroot` it takes the C library, its
-start files and every library from the sysroot; only GCC's own `libgcc.a` and `libgcc_s` (by its
-soname, which the root filesystem has) come from the compiler.
+and pkg-config with `PKG_CONFIG_SYSROOT_DIR=$S` and `PKG_CONFIG_LIBDIR=$S/usr/lib/pkgconfig`. Then
+every header, start file and library is the sysroot's; only GCC's own headers, `libgcc.a`,
+`crtbegin.o` and `crtend.o` are the compiler's.
 
 `testguest-<version>-legal-info.tar` is Buildroot's `make legal-info` for the image: the manifests,
 the licence texts, the source of every package in it with the patches Buildroot applied (`sources/`,

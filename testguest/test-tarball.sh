@@ -39,10 +39,15 @@ set -- "$DIR"/rootfs/usr/lib/libgallium-*.so
 [ -f "$1" ] || die "the root filesystem has no Mesa gallium library"
 grep -q virgl "$1" || die "$1 has no virgl driver"
 
-# the compiler: any GCC for the triplet; Debian's
+# the compiler: Debian's for the triplet. It is not built for a sysroot: --sysroot alone leaves its
+# own tool directory (/usr/<triplet>, Debian's armel C library when libc6-dev-armel-cross is
+# installed) ahead of it, so the sysroot is put first by hand (README.md, "The tarballs")
 cc=$(field Target-Triplet)-gcc
 "$cc" --version | head -1
 sysroot=$DIR/root/sysroot
+s=$sysroot
+sysroot_flags="--sysroot=$s -nostdinc -isystem $("$cc" -print-file-name=include) -isystem $s/usr/include
+	-B$s/usr/lib/ -B$s/lib/ -L$s/lib -L$s/usr/lib -Wl,-rpath-link,$s/lib:$s/usr/lib"
 
 cat > "$DIR/t.c" <<'EOF'
 #include <fcntl.h>
@@ -60,19 +65,24 @@ int main(void)
 }
 EOF
 # shellcheck disable=SC2046 # the flags are a list
-"$cc" --sysroot="$sysroot" $(field Target-Flags) -O2 -Wall -Werror -o "$DIR/t" "$DIR/t.c" \
-	-lgbm -lEGL -lGLESv2 -Wl,--trace > "$DIR/trace"
-# every shared library the linker took is the sysroot's, not the compiler's own C library; only
-# GCC's runtime (libgcc_s, by its soname, which the root filesystem has) comes from the compiler
+# shellcheck disable=SC2086 # the flags are a list
+"$cc" $sysroot_flags $(field Target-Flags) -O2 -Wall -Werror -o "$DIR/t" "$DIR/t.c" \
+	-lgbm -lEGL -lGLESv2 -H -Wl,--trace > "$DIR/trace" 2>&1
+# every header, start file and library the compiler took is the sysroot's; only GCC's own headers,
+# libgcc.a, crtbegin and crtend (and libgcc_s's link script, which names the sysroot's
+# libgcc_s.so.1) are the compiler's
 gcc_dir=$(dirname "$(realpath "$("$cc" -print-libgcc-file-name)")")
-grep -o '/[^ ()]*\.so[^ ()]*' "$DIR/trace" | while read -r f; do
+grep -o '/[^ ()]*\.\(so[.0-9]*\|o\|a\|h\)$' "$DIR/trace" | sort -u | while read -r f; do
 	case $(realpath -m "$f") in
 	"$(realpath "$sysroot")"/*) ;;
-	"$gcc_dir"/libgcc_s.so*) ;;
-	*) die "linked against $f, outside the sysroot" ;;
+	"$gcc_dir"/*) ;;
+	"${TMPDIR:-/tmp}"/cc*.o) ;; # the program's own object
+	*) die "compiled or linked with $f, outside the sysroot" ;;
 	esac
 done
-grep -q 'sysroot/lib/libc\.so\.6\|sysroot/usr/lib/libc\.so' "$DIR/trace" || die "the C library is not the sysroot's"
+grep -q 'sysroot/lib/libc\.so\.6' "$DIR/trace" || die "the C library is not the sysroot's"
+grep -q 'sysroot/usr/include/stdio\.h\|sysroot/usr/include/fcntl\.h' "$DIR/trace" ||
+	die "the C library's headers are not the sysroot's"
 readelf -h "$DIR/t" | grep -q 'Machine:.*ARM$' || die "the program is not 32-bit ARM"
 readelf -h "$DIR/t" | grep -q 'soft-float ABI' || die "the program is not EABI soft-float"
 readelf -A "$DIR/t" | grep -q 'Tag_ABI_VFP_args' && die "the program passes floats in VFP registers"
