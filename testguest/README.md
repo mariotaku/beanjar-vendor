@@ -54,10 +54,14 @@ directory (`/usr/arm-linux-gnueabi`, where Debian's armel C library is when
 
 ```sh
 S=<tree>/sysroot
-arm-linux-gnueabi-gcc --sysroot=$S -nostdinc -isystem "$(arm-linux-gnueabi-gcc -print-file-name=include)" \
-    -isystem $S/usr/include -B$S/usr/lib/ -B$S/lib/ -L$S/lib -L$S/usr/lib \
-    -Wl,-rpath-link,$S/lib:$S/usr/lib <Target-Flags> ...
+arm-linux-gnueabi-gcc --sysroot=$S -nostdinc -isystem $S/usr/include \
+    -idirafter "$(arm-linux-gnueabi-gcc -print-file-name=include)" -U_TIME_BITS \
+    -B$S/usr/lib/ -B$S/lib/ -L$S/lib -L$S/usr/lib -Wl,-rpath-link,$S/lib:$S/usr/lib <Target-Flags> ...
 ```
+
+`-U_TIME_BITS`: Debian 13's armel compiler defines `_TIME_BITS=64` (and `_FILE_OFFSET_BITS=64`) by
+default, from Debian's 64-bit `time_t` transition; webOS's userland, like glibc's default, has a
+32-bit `time_t`.
 
 and pkg-config with `PKG_CONFIG_SYSROOT_DIR=$S` and `PKG_CONFIG_LIBDIR=$S/usr/lib/pkgconfig`. Then
 every header, start file and library is the sysroot's; only GCC's own headers, `libgcc.a`,

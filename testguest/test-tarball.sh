@@ -41,13 +41,14 @@ grep -q virgl "$1" || die "$1 has no virgl driver"
 
 # the compiler: Debian's for the triplet. It is not built for a sysroot: --sysroot alone leaves its
 # own tool directory (/usr/<triplet>, Debian's armel C library when libc6-dev-armel-cross is
-# installed) ahead of it, so the sysroot is put first by hand (README.md, "The tarballs")
+# installed) ahead of it, so the sysroot is put first by hand (README.md, "The tarballs"); and it
+# defines _TIME_BITS=64 by default, where webOS's userland is 32-bit time_t
 cc=$(field Target-Triplet)-gcc
 "$cc" --version | head -1
 sysroot=$DIR/root/sysroot
 s=$sysroot
-sysroot_flags="--sysroot=$s -nostdinc -isystem $("$cc" -print-file-name=include) -isystem $s/usr/include
-	-B$s/usr/lib/ -B$s/lib/ -L$s/lib -L$s/usr/lib -Wl,-rpath-link,$s/lib:$s/usr/lib"
+sysroot_flags="--sysroot=$s -nostdinc -isystem $s/usr/include -idirafter $("$cc" -print-file-name=include)
+	-U_TIME_BITS -B$s/usr/lib/ -B$s/lib/ -L$s/lib -L$s/usr/lib -Wl,-rpath-link,$s/lib:$s/usr/lib"
 
 cat > "$DIR/t.c" <<'EOF'
 #include <fcntl.h>
