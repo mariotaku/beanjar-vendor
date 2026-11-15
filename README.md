@@ -22,12 +22,14 @@ GitHub release named after the tag.
 | Directory | Tarball | Workflow |
 |---|---|---|
 | [`qemu/`](qemu/README.md) | `qemu-<version>-<arch>.tar.xz`: QEMU 10.0.2 (`qemu-system-aarch64`, `vhost-user-gpu`) with Beanjar's EGL and D-Bus display patches, for `beanjar-qemu` | `.github/workflows/qemu.yml` |
+| [`qemu-user/`](qemu-user/README.md) | `qemu-user-<version>-arm64.tar.xz`: QEMU 10.0.2's `qemu-arm`, static, with the compat bridge that hands a 32-bit ARM userland's system calls to Beanjar's arm64 guest kernel; arm64 only, as it runs inside the guest on every host | `.github/workflows/qemu-user.yml` |
 | [`neatvnc/`](neatvnc/README.md) | `neatvnc-<version>-<arch>.tar.xz`: neatvnc 1.0.4 with V4L2 H.264 fixes, and aml 1.0, for `beanjar-vnc` | `.github/workflows/neatvnc.yml` |
 | [`ffmpeg/`](ffmpeg/README.md) | `ffmpeg-<version>-<arch>.tar.xz`: FFmpeg 7.1.5 with the V4L2 Request API hwaccels, under `/usr/lib/beanjar/ffmpeg` | `.github/workflows/ffmpeg.yml` |
 | [`angle/`](angle/README.md) | `angle-<version>-macos-<arch>.tar.xz`: ANGLE's `libEGL` and `libGLESv2` with the Metal backend, macOS only | `.github/workflows/macos.yml` |
 | [`virglrenderer/`](virglrenderer/README.md) | `virglrenderer-<version>-macos-<arch>.tar.xz`: virglrenderer from `main` with OpenGL ES host fixes, and libepoxy with EGL, macOS only | `.github/workflows/macos.yml` |
 | [`qemu/`](qemu/README.md) | `qemu-<version>-macos-<arch>.tar.xz`: the same QEMU for macOS | `.github/workflows/macos.yml` |
 | [`homebrew/`](homebrew/README.md) | Homebrew bottles of Beanjar's formulae of the macOS stack, `beanjar-angle`, `beanjar-libepoxy`, `beanjar-virglrenderer` and `beanjar-qemu` | `.github/workflows/homebrew.yml` |
+| [`testguest/`](testguest/README.md) | `testguest-<version>-armhf.tar.xz`: the test guest userland, a 32-bit ARM root filesystem from Buildroot 2026.02.3 (BusyBox, glibc, Mesa's virgl driver) with its sysroot and toolchain pin, and `testguest-<version>-legal-info.tar`; it runs inside the guest, so one build serves every host | `.github/workflows/testguest.yml` |
 
 The patches and build scripts are GPL-2.0-or-later (`LICENSE`), except neatvnc's patches, which
 are ISC like neatvnc, and the virglrenderer and libepoxy patches, which are MIT like those; every

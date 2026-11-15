@@ -13,6 +13,10 @@ path = [
   "qemu/qemu.sha256",
   "qemu/NOTICE",
   "qemu/patches/**.patch",
+  "qemu-user/VERSION",
+  "qemu-user/qemu.sha256",
+  "qemu-user/NOTICE",
+  "qemu-user/patches/**.patch",
   "neatvnc/VERSION",
   "neatvnc/neatvnc.sha256",
   "neatvnc/NOTICE",
@@ -26,6 +30,9 @@ path = [
   "virglrenderer/VERSION",
   "virglrenderer/sources",
   "virglrenderer/NOTICE",
+  "testguest/VERSION",
+  "testguest/buildroot.sha256",
+  "testguest/NOTICE",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"

@@ -14,6 +14,7 @@ on:
       - "**"
     tags:
       - "qemu-*"
+      - "!qemu-user-*"
     # path filters are not evaluated for tags
     paths:
       - "qemu/**"
