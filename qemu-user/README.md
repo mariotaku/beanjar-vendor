@@ -56,6 +56,12 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   mappings' sizes and their resident pages from the host's `smaps`) instead of the whole qemu
   process's, whose TCG code buffer and heap made webOS's iconnectivity, which aborts when its own
   `VmRSS` passes a limit, abort at start. Another process reading them still sees qemu's.
+- `0005` linux-user: `getsockopt(SO_PEERGROUPS)` answered with the guest's buffer and length, the
+  needed length written back with ERANGE. It went through the int path, so systemd's
+  `getpeergroups()`, which grows its buffer by that length, looped forever: PID 1 at 100% CPU.
+- `0006` linux-user: `kill()` of one of qemu's own threads (its RCU thread), which shows in
+  `/proc/self/task` and `cgroup.threads` but would not exist natively, answers ESRCH:
+  systemd-udevd SIGKILLs every other task of its cgroup after each event and killed itself.
 
 ## The tarball
 
