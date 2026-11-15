@@ -29,7 +29,7 @@ GitHub release named after the tag.
 | [`virglrenderer/`](virglrenderer/README.md) | `virglrenderer-<version>-macos-<arch>.tar.xz`: virglrenderer from `main` with OpenGL ES host fixes, and libepoxy with EGL, macOS only | `.github/workflows/macos.yml` |
 | [`qemu/`](qemu/README.md) | `qemu-<version>-macos-<arch>.tar.xz`: the same QEMU for macOS | `.github/workflows/macos.yml` |
 | [`homebrew/`](homebrew/README.md) | Homebrew bottles of Beanjar's formulae of the macOS stack, `beanjar-angle`, `beanjar-libepoxy`, `beanjar-virglrenderer` and `beanjar-qemu` | `.github/workflows/homebrew.yml` |
-| [`testguest/`](testguest/README.md) | `testguest-<version>-armhf.tar.xz`: the test guest userland, a 32-bit ARM root filesystem from Buildroot 2026.02.3 (BusyBox, glibc, Mesa's virgl driver) with its sysroot and toolchain pin, and `testguest-<version>-legal-info.tar`; it runs inside the guest, so one build serves every host | `.github/workflows/testguest.yml` |
+| [`testguest/`](testguest/README.md) | `testguest-<version>-armel.tar.xz`: the test guest userland, a 32-bit ARM (EABI softfp, as webOS) root filesystem from Buildroot 2026.02.3 (BusyBox, glibc, Mesa's virgl driver) with its sysroot, and `testguest-<version>-legal-info.tar`; it runs inside the guest, so one build serves every host | `.github/workflows/testguest.yml` |
 
 The patches and build scripts are GPL-2.0-or-later (`LICENSE`), except neatvnc's patches, which
 are ISC like neatvnc, and the virglrenderer and libepoxy patches, which are MIT like those; every

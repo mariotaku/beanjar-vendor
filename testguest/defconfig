@@ -1,13 +1,21 @@
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Beanjar's test guest userland: armv7 hard-float glibc (Bootlin's external toolchain), BusyBox
-# init, Mesa with the virgl gallium driver only (EGL, OpenGL ES, GBM), a squashfs root filesystem.
+# Beanjar's test guest userland: armv7 EABI with the soft-float calling convention and VFPv3/NEON
+# hardware (softfp), glibc, as webOS's userland; Buildroot's own toolchain (no external toolchain
+# is built for this ABI). BusyBox init, Mesa with the virgl gallium driver only (EGL, OpenGL ES,
+# GBM), a squashfs root filesystem.
 BR2_arm=y
-BR2_cortex_a7=y
-BR2_ARM_FPU_NEON_VFPV4=y
-BR2_TOOLCHAIN_EXTERNAL=y
-BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
-BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_ARMV7_EABIHF_GLIBC_STABLE=y
+BR2_cortex_a9=y
+BR2_ARM_ENABLE_NEON=y
+BR2_ARM_ENABLE_VFP=y
+BR2_ARM_EABI=y
+BR2_ARM_FPU_NEON=y
+BR2_ARM_INSTRUCTIONS_ARM=y
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+# glibc takes the headers' version as the oldest kernel it runs on (--enable-kernel); the oldest
+# Buildroot offers, well below the guest kernel
+BR2_KERNEL_HEADERS_5_10=y
 BR2_CCACHE=y
 BR2_REPRODUCIBLE=y
 BR2_TARGET_GENERIC_HOSTNAME="beanjar-testguest"
