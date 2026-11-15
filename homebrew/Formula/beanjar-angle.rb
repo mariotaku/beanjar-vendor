@@ -69,6 +69,10 @@ class BeanjarAngle < Formula
     resource("llvmobjdump").stage { (llvm/"bin").install Dir["bin/*"] }
     resource("gn").stage(buildpath/"buildtools/mac")
     ENV.prepend_path "PATH", formula_opt_libexec("python@3.13")/"bin"
+    # Room in the libraries' headers for the longer paths Homebrew writes when it relocates a
+    # bottle (Intel's /usr/local is shorter than the placeholder that replaces it)
+    inreplace "build/config/mac/BUILD.gn", 'ldflags = [ "-Wl,-ObjC" ]',
+              'ldflags = [ "-Wl,-ObjC", "-Wl,-headerpad_max_install_names" ]'
     # No git metadata in the archive: name the commit for ANGLE's version string
     ENV["ANGLE_UPSTREAM_HASH"] = "29d18232e803"
 
