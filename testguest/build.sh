@@ -96,12 +96,16 @@ cp "$LEGAL/manifest.csv" "$LEGAL/buildroot.config" "$LEGAL/README" "$TREE/share/
 cp -a "$LEGAL/licenses" "$TREE/share/doc/testguest/licenses"
 install -m 0644 "$TOP/NOTICE" "$TREE/share/doc/testguest/NOTICE"
 
-# The CPU options Buildroot's toolchain wrapper adds, which a compiler for the root filesystem needs
-flags="-mcpu=cortex-a9 -mfpu=neon -mfloat-abi=softfp -mabi=aapcs-linux -marm"
-wrapper_flags=$(BR2_DEBUG_WRAPPER=1 "$O/host/bin/arm-linux-gcc" -E -x c /dev/null -o /dev/null 2>&1 |
-	sed -n 's/^Toolchain wrapper executing: //p')
-for x in $flags; do
-	case $wrapper_flags in *"'$x'"*) ;; *) die "Buildroot's wrapper does not pass $x: $wrapper_flags" ;; esac
+# The CPU options Buildroot built its GCC for (its defaults: the wrapper passes none), which a
+# compiler for the root filesystem needs: webOS's
+cfg() { sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$O/.config"; }
+flags="-mcpu=$(cfg BR2_GCC_TARGET_CPU) -mfpu=$(cfg BR2_GCC_TARGET_FPU) -mfloat-abi=$(cfg BR2_GCC_TARGET_FLOAT_ABI)"
+flags="$flags -mabi=$(cfg BR2_GCC_TARGET_ABI) -m$(cfg BR2_GCC_TARGET_MODE)"
+[ "$flags" = "-mcpu=cortex-a9 -mfpu=neon -mfloat-abi=softfp -mabi=aapcs-linux -marm" ] ||
+	die "defconfig's CPU options are not those of webOS's userland: $flags"
+gcc_config=" $("$O/host/bin/arm-linux-gcc" -v 2>&1 | tr "\n" " ") "
+for x in --with-cpu=cortex-a9 --with-fpu=neon --with-float=softfp --with-abi=aapcs-linux --with-mode=arm; do
+	case $gcc_config in *" $x "*) ;; *) die "Buildroot's GCC is not configured $x" ;; esac
 done
 gcc_version=$("$O/host/bin/arm-linux-gcc" -dumpfullversion)
 src_date=$(stat -c %Y "$SRC/Makefile")
