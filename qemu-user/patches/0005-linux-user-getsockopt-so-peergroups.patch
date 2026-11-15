@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 16:30:00 +0900
+Subject: [PATCH] linux-user: getsockopt SO_PEERGROUPS
+
+SO_PEERGROUPS fell through to the int case: qemu asked the kernel with a
+4-byte buffer and, for a peer with more than one group, returned ERANGE
+without the length the kernel had reported. systemd's getpeergroups()
+grows its buffer by that length and asks again, so systemd as PID 1 under
+qemu-arm spun at 100% CPU in that loop once a client with several groups
+connected, and stopped answering systemctl.
+
+Answer it as SO_PEERSEC is answered: the guest's buffer and length passed
+to the host (gids are 32-bit on both), the length written back, ERANGE
+included.
+---
+diff --git a/linux-user/generic/sockbits.h b/linux-user/generic/sockbits.h
+index b3b4a8e44..3410d2a95 100644
+--- a/linux-user/generic/sockbits.h
++++ b/linux-user/generic/sockbits.h
+@@ -56,6 +56,8 @@
+ 
+ #define TARGET_SO_PEERSEC              31
+ 
++#define TARGET_SO_PEERGROUPS           59
++
+ #define TARGET_SO_PROTOCOL             38
+ #define TARGET_SO_DOMAIN               39
+ #endif
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index 8ef4ed61e..d158724f6 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -2675,6 +2675,33 @@ get_timeout:
+             unlock_user(name, optval_addr, lv);
+             break;
+         }
++#ifdef SO_PEERGROUPS
++        case TARGET_SO_PEERGROUPS: {
++            /*
++             * An array of 32-bit gids, as on the host; ERANGE with the length needed when it
++             * is too short, which callers (systemd's getpeergroups()) grow the buffer by.
++             */
++            void *gids;
++
++            if (get_user_u32(len, optlen)) {
++                return -TARGET_EFAULT;
++            }
++            if (len < 0) {
++                return -TARGET_EINVAL;
++            }
++            gids = lock_user(VERIFY_WRITE, optval_addr, len, 0);
++            if (!gids && len) {
++                return -TARGET_EFAULT;
++            }
++            lv = len;
++            ret = get_errno(getsockopt(sockfd, level, SO_PEERGROUPS, gids, &lv));
++            if (put_user_u32(lv, optlen)) {
++                ret = -TARGET_EFAULT;
++            }
++            unlock_user(gids, optval_addr, ret < 0 ? 0 : lv);
++            break;
++        }
++#endif
+         case TARGET_SO_LINGER:
+         {
+             struct linger lg;
