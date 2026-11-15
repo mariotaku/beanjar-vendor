@@ -1,25 +1,26 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build Beanjar's test guest userland with Buildroot: a 32-bit ARM (armv7 hard-float, glibc) root
-# filesystem with BusyBox init and Mesa's virgl driver, the sysroot to compile programs against it,
-# the pin of the toolchain that does, and Buildroot's legal-info. Run as root in a throwaway
-# debian:trixie container on amd64 (Bootlin's toolchains run on x86_64 only): it installs
-# Buildroot's host tools into the system it runs in.
+# Build Beanjar's test guest userland with Buildroot: a 32-bit ARM (armv7 EABI softfp, glibc, as
+# webOS's) root filesystem with BusyBox init and Mesa's virgl driver, the sysroot to compile
+# programs against it, and Buildroot's legal-info. Run as root in a throwaway debian:trixie
+# container: it installs Buildroot's host tools into the system it runs in.
 #
 #   testguest/build.sh [OUT]     default OUT: build/testguest in the repository
 #
-# VERSION holds the version, the Buildroot release plus a Beanjar revision (2026.02.3+beanjar1);
+# VERSION holds the version, the Buildroot release plus a Beanjar revision (2026.02.3+beanjar2);
 # Buildroot's release tarball is downloaded and checked against buildroot.sha256, and built with
 # defconfig. BR2_DL_DIR (default OUT/dl) and BR2_CCACHE_DIR (default OUT/ccache) are Buildroot's
 # download and compiler caches, which CI keeps between runs. The results, in OUT:
 #
-#   testguest-<version>-armhf.tar.xz        rootfs.squashfs, sysroot/, share/doc/testguest/, BUILDINFO
+#   testguest-<version>-armel.tar.xz        rootfs.squashfs, sysroot/, share/doc/testguest/, BUILDINFO
 #   testguest-<version>-legal-info.tar      Buildroot's legal-info and its own release tarball
 #
-# BUILDINFO is in Debian control syntax; its Toolchain field pins the compiler (file, SHA-256,
-# URL) and Toolchain-Flags the options it needs for this CPU. test-tarball.sh then compiles and
-# links a program against the tarball unpacked elsewhere, with that toolchain.
+# BUILDINFO is in Debian control syntax; Target-Triplet and Target-Flags say how to compile for the
+# root filesystem: with any GCC for arm-linux-gnueabi (Debian's gcc-arm-linux-gnueabi) and those
+# options, against the sysroot. Buildroot's own toolchain, which built the image, is not shipped.
+# test-tarball.sh then compiles and links a program against the tarball unpacked elsewhere, with
+# Debian's cross compiler.
 set -eu
 umask 022
 TOP=$(cd "$(dirname "$0")" && pwd)
@@ -31,7 +32,6 @@ die() { echo "build.sh: $*" >&2; exit 1; }
 step() { echo "== $* ($(date -u +%T))"; }
 [ "$(id -u)" = 0 ] || die "run as root in a throwaway Debian 13 container"
 grep -q '^VERSION_ID="13"' /etc/os-release || die "Debian 13 required"
-[ "$(dpkg --print-architecture)" = amd64 ] || die "amd64 only: Bootlin's toolchains run on x86_64"
 version=$(cat "$TOP/VERSION")
 br_version=${version%%+beanjar*}
 [ "$br_version" != "$version" ] || die "VERSION $version is not <Buildroot version>+beanjar<N>"
@@ -44,11 +44,11 @@ t0=$(date +%s)
 
 step "build dependencies"
 apt-get update
-# Buildroot's mandatory host tools (its manual, "System requirements"), and squashfs-tools for
-# test-tarball.sh
+# Buildroot's mandatory host tools (its manual, "System requirements"), and squashfs-tools and
+# Debian's armel cross compiler for test-tarball.sh
 apt-get install -y --no-install-recommends \
 	ca-certificates curl wget git build-essential file patch perl python3 bzip2 xz-utils cpio \
-	unzip rsync bc squashfs-tools
+	unzip rsync bc squashfs-tools gcc-arm-linux-gnueabi
 
 step "Buildroot $br_version"
 f=buildroot-$br_version.tar.xz
@@ -96,34 +96,26 @@ cp "$LEGAL/manifest.csv" "$LEGAL/buildroot.config" "$LEGAL/README" "$TREE/share/
 cp -a "$LEGAL/licenses" "$TREE/share/doc/testguest/licenses"
 install -m 0644 "$TOP/NOTICE" "$TREE/share/doc/testguest/NOTICE"
 
-# The toolchain Buildroot used, as Buildroot pins it, and the CPU options its wrapper adds
-eval "$(make -C "$SRC" O="$O" -s VARS='TOOLCHAIN_EXTERNAL_BOOTLIN_SOURCE TOOLCHAIN_EXTERNAL_BOOTLIN_SITE' \
-	QUOTED_VARS=YES printvars)"
-tc=$TOOLCHAIN_EXTERNAL_BOOTLIN_SOURCE
-[ -f "$BR2_DL_DIR/toolchain-external-bootlin/$tc" ] || die "no $tc in the download cache"
-tc_sha=$(sha256sum < "$BR2_DL_DIR/toolchain-external-bootlin/$tc" | cut -d' ' -f1)
-grep -q "$tc_sha  $tc" "$SRC"/toolchain/toolchain-external/toolchain-external-bootlin/*.hash ||
-	die "$tc is not the one Buildroot's hash file pins"
-tc_dir=$(tar -tJf "$BR2_DL_DIR/toolchain-external-bootlin/$tc" | head -1 | cut -d/ -f1)
-flags="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -mabi=aapcs-linux -marm"
+# The CPU options Buildroot's toolchain wrapper adds, which a compiler for the root filesystem needs
+flags="-mcpu=cortex-a9 -mfpu=neon -mfloat-abi=softfp -mabi=aapcs-linux -marm"
 wrapper_flags=$(BR2_DEBUG_WRAPPER=1 "$O/host/bin/arm-linux-gcc" -E -x c /dev/null -o /dev/null 2>&1 |
 	sed -n 's/^Toolchain wrapper executing: //p')
 for x in $flags; do
 	case $wrapper_flags in *"'$x'"*) ;; *) die "Buildroot's wrapper does not pass $x: $wrapper_flags" ;; esac
 done
+gcc_version=$("$O/host/bin/arm-linux-gcc" -dumpfullversion)
 src_date=$(stat -c %Y "$SRC/Makefile")
 {
 	echo "Program: testguest"
 	echo "Version: $version"
-	echo "Architecture: armhf"
+	echo "Architecture: armel"
 	echo "Build-Architecture: amd64"
 	echo "Debian-Release: $(cat /etc/debian_version)"
 	echo "Buildroot: $br_version $(cut -d' ' -f1 "$TOP/buildroot.sha256") https://buildroot.org/downloads/$f"
 	echo "Defconfig: $(sha256sum < "$TOP/defconfig" | cut -d' ' -f1)"
-	echo "Toolchain: $tc $tc_sha $TOOLCHAIN_EXTERNAL_BOOTLIN_SITE/$tc"
-	echo "Toolchain-Directory: $tc_dir"
-	echo "Toolchain-Prefix: arm-buildroot-linux-gnueabihf-"
-	echo "Toolchain-Flags: $flags"
+	echo "Toolchain: Buildroot's own, GCC $gcc_version (not shipped)"
+	echo "Target-Triplet: arm-linux-gnueabi"
+	echo "Target-Flags: $flags"
 	echo "Root-Filesystem: rootfs.squashfs squashfs lzo $(sha256sum < "$TREE/rootfs.squashfs" | cut -d' ' -f1)"
 	echo "Packages:"
 	sed -n '2,$s/^"\([^"]*\)","\([^"]*\)","\([^"]*\)".*/ \1 \2 (\3)/p' "$LEGAL/manifest.csv"
@@ -131,7 +123,7 @@ src_date=$(stat -c %Y "$SRC/Makefile")
 cat "$TREE/BUILDINFO"
 
 step "tarballs"
-tarball=$OUT/testguest-$version-armhf.tar.xz
+tarball=$OUT/testguest-$version-armel.tar.xz
 tar -C "$TREE" --sort=name --owner=0 --group=0 --numeric-owner \
 	--mtime="@$src_date" --clamp-mtime -cJf "$tarball" .
 # The legal-info of what is in the image (the host tools' sources are left out: nothing of them is

@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build the test guest userland (a 32-bit ARM root filesystem, its sysroot and toolchain pin, and
+# Build the test guest userland (a 32-bit ARM root filesystem and its sysroot, and
 # Buildroot's legal-info) with testguest/build.sh in a debian:trixie container on amd64. Buildroot's
 # downloads and ccache are kept between runs. Every run uploads the tarballs as the artifact
-# beanjar-testguest-armhf. Pushing a tag testguest-<version>, where <version> is testguest/VERSION,
+# beanjar-testguest-armel. Pushing a tag testguest-<version>, where <version> is testguest/VERSION,
 # also publishes them as a GitHub release with a SHA256SUMS file.
 name: testguest
 
@@ -32,10 +32,10 @@ concurrency:
 
 jobs:
   build:
-    name: testguest (armhf)
+    name: testguest (armel)
     runs-on: ubuntu-24.04
     container: debian:trixie
-    timeout-minutes: 90
+    timeout-minutes: 240
     env:
       BR2_DL_DIR: ${{ github.workspace }}/build/cache/dl
       BR2_CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
@@ -72,9 +72,9 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: beanjar-testguest-armhf
+          name: beanjar-testguest-armel
           path: |
-            build/testguest/testguest-*-armhf.tar.xz
+            build/testguest/testguest-*-armel.tar.xz
             build/testguest/testguest-*-legal-info.tar
           if-no-files-found: error
 
@@ -88,7 +88,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: beanjar-testguest-armhf
+          name: beanjar-testguest-armel
           path: dist
       - name: Release
         env:
@@ -98,12 +98,12 @@ jobs:
         run: |
           cd dist
           version=${TAG#testguest-}
-          set -- "testguest-$version-armhf.tar.xz" "testguest-$version-legal-info.tar"
+          set -- "testguest-$version-armel.tar.xz" "testguest-$version-legal-info.tar"
           for f in "$@"; do
             [ -f "$f" ] || { echo "missing $f" >&2; ls -l; exit 1; }
           done
           sha256sum "$@" > SHA256SUMS
           cat SHA256SUMS
           gh release create "$TAG" --verify-tag --title "$TAG" \
-            --notes "The test guest userland (armhf root filesystem, sysroot and toolchain pin) and its legal-info, built by testguest/build.sh; see testguest/README.md." \
+            --notes "The test guest userland (armel root filesystem, and sysroot) and its legal-info, built by testguest/build.sh; see testguest/README.md." \
             "$@" SHA256SUMS
