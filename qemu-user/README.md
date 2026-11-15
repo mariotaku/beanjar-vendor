@@ -38,7 +38,9 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   64-bit tasks that runs one i386 compat call"). The kernel's compat layer there is i386's, with
   its own call numbers, so qemu converts the ordinary calls itself and hands the kernel only
   those whose meaning depends on a 32-bit caller: every ioctl, `read`, `write`, `readv` and
-  `writev` on a descriptor qemu does not translate, and the robust futex list. i386 aligns 64-bit
+  `writev` on a descriptor qemu does not translate, the robust futex list, and `getdents`,
+  `getdents64`, `lseek` and `_llseek`, for which ext4 sizes directory offsets for the caller (a
+  32-bit glibc's `readdir` fails with EOVERFLOW on 64-bit ones). i386 aligns 64-bit
   fields to 4 where ARM EABI aligns them to 8: the ioctls whose ARM layout is x86-64's native one
   run natively, and SNDRV_CTL `ELEM_READ`/`ELEM_WRITE` and `VIDIOC_DQEVENT` are repacked to
   i386's layout and back (`linux-user/ioctl-bridge.c.inc`). `QEMU_BRIDGE` works as for `0001`.

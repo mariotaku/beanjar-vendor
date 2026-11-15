@@ -9,9 +9,13 @@ On an x86-64 host whose kernel has Beanjar's x86 compat_bridge system call
 converts a 32-bit ARM guest's ordinary system calls itself, as it always
 does, and hands the kernel only those whose meaning depends on a 32-bit
 caller: every ioctl, read, write, readv and writev on a descriptor qemu
-does not translate, and set_robust_list and get_robust_list. The kernel's
-compat converters then do the ABI (compat_sys_ioctl, the drivers'
-compat_ioctl, evdev's and uinput's 16-byte events, compat iovecs).
+does not translate, set_robust_list and get_robust_list, and getdents,
+getdents64, lseek and _llseek. The kernel's compat converters then do the
+ABI (compat_sys_ioctl, the drivers' compat_ioctl, evdev's and uinput's
+16-byte events, compat iovecs), and ext4 gives directory offsets (hashes)
+that fit 32 bits, which a 32-bit glibc's readdir needs: with 64-bit ones
+it fails with EOVERFLOW, and webOS's db8 found its database directory
+empty.
 
 The x86-64 kernel's compat layer is i386's, which aligns 64-bit fields to
 4 where ARM EABI aligns them to 8. The ioctls whose ARM layout is the
@@ -26,10 +30,10 @@ QEMU_BRIDGE=1 says on stderr why it could not be turned on.
 ---
 diff --git a/linux-user/ioctl-bridge.c.inc b/linux-user/ioctl-bridge.c.inc
 new file mode 100644
-index 00000000..ebfcf90c
+index 000000000..04ee4d20a
 --- /dev/null
 +++ b/linux-user/ioctl-bridge.c.inc
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,228 @@
 +/*
 + * The ioctl bridge: a 32-bit ARM guest on an x86-64 host whose kernel has Beanjar's x86
 + * compat_bridge system call (0x7ff0: one i386 compat call, with TS_COMPAT set for that call
@@ -40,6 +44,9 @@ index 00000000..ebfcf90c
 + *   ioctl                             every one; no table entry needed here
 + *   read, write, readv, writev        on a descriptor qemu does not translate (fd_trans)
 + *   set_robust_list, get_robust_list  qemu has no robust list of its own for the guest
++ *   getdents, getdents64, lseek,      ext4 sizes a directory's offsets (hashes) for the
++ *   _llseek                           caller: 32-bit for a 32-bit one, which a 32-bit
++ *                                     glibc's readdir needs (EOVERFLOW otherwise)
 + * It needs guest addresses equal to host addresses (guest_base 0).
 + *
 + * The x86-64 kernel's compat layer is i386's, not ARM EABI's: i386 aligns 64-bit fields to 4,
@@ -61,6 +68,10 @@ index 00000000..ebfcf90c
 +#define I386_NR_writev 146
 +#define I386_NR_set_robust_list 311
 +#define I386_NR_get_robust_list 312
++#define I386_NR_lseek 19
++#define I386_NR__llseek 140
++#define I386_NR_getdents 141
++#define I386_NR_getdents64 220
 +
 +static bool bridge_on;
 +
@@ -103,10 +114,11 @@ index 00000000..ebfcf90c
 +    return r == -1 ? -host_to_target_errno(errno) : (abi_long)r;
 +}
 +
-+static abi_long bridge_call(int nr, abi_ulong a1, abi_ulong a2, abi_ulong a3)
++static abi_long bridge_call(int nr, abi_ulong a1, abi_ulong a2, abi_ulong a3, abi_ulong a4,
++                            abi_ulong a5)
 +{
 +    return bridge_ret(safe_syscall(HOST_NR_compat_bridge, nr, (uint32_t)a1, (uint32_t)a2,
-+                                   (uint32_t)a3, 0, 0));
++                                   (uint32_t)a3, (uint32_t)a4, (uint32_t)a5));
 +}
 +
 +/* ARM EABI ioctl numbers whose payload is laid out unlike i386's */
@@ -147,7 +159,7 @@ index 00000000..ebfcf90c
 +    if (in) {
 +        memmove(p + head, p + head + 4, tail);
 +    }
-+    ret = bridge_call(I386_NR_ioctl, fd, cmd, arg);
++    ret = bridge_call(I386_NR_ioctl, fd, cmd, arg, 0, 0);
 +    memmove(p + head + 4, p + head, tail);
 +    memset(p + head, 0, 4);
 +    unlock_user(p, arg, arm_size);
@@ -192,7 +204,8 @@ index 00000000..ebfcf90c
 +}
 +
 +/* true if the bridge ran the call, with its result in *ret */
-+static bool bridge_syscall(int num, abi_long a1, abi_long a2, abi_long a3, abi_long *ret)
++static bool bridge_syscall(int num, abi_long a1, abi_long a2, abi_long a3, abi_long a4,
++                           abi_long a5, abi_long *ret)
 +{
 +    int nr;
 +
@@ -228,17 +241,29 @@ index 00000000..ebfcf90c
 +    case TARGET_NR_get_robust_list:
 +        nr = I386_NR_get_robust_list;
 +        break;
++    case TARGET_NR_getdents:
++        nr = I386_NR_getdents;
++        break;
++    case TARGET_NR_getdents64:
++        nr = I386_NR_getdents64;
++        break;
++    case TARGET_NR_lseek:
++        nr = I386_NR_lseek;
++        break;
++    case TARGET_NR__llseek:
++        nr = I386_NR__llseek;
++        break;
 +    default:
 +        return false;
 +    }
-+    *ret = bridge_call(nr, a1, a2, a3);
++    *ret = bridge_call(nr, a1, a2, a3, a4, a5);
 +    if (*ret == -TARGET_ENOSYS) {
 +        qemu_log_mask(LOG_UNIMP, "bridge: syscall %d: ENOSYS from the kernel\n", num);
 +    }
 +    return true;
 +}
 diff --git a/linux-user/main.c b/linux-user/main.c
-index 6ace61a5..cc4ae667 100644
+index 6ace61a59..cc4ae6672 100644
 --- a/linux-user/main.c
 +++ b/linux-user/main.c
 @@ -1032,7 +1032,7 @@ int main(int argc, char **argv, char **envp)
@@ -251,7 +276,7 @@ index 6ace61a5..cc4ae667 100644
  #endif
      target_cpu_copy_regs(env, regs);
 diff --git a/linux-user/syscall.c b/linux-user/syscall.c
-index 4896c37a..22ef3b82 100644
+index 4896c37ae..9859f44c4 100644
 --- a/linux-user/syscall.c
 +++ b/linux-user/syscall.c
 @@ -13881,6 +13881,9 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
@@ -270,12 +295,12 @@ index 4896c37a..22ef3b82 100644
      if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, &ret))
 +#endif
 +#ifdef QEMU_IOCTL_BRIDGE
-+    if (!bridge_syscall(num, arg1, arg2, arg3, &ret))
++    if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, &ret))
  #endif
      ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
                        arg5, arg6, arg7, arg8);
 diff --git a/linux-user/user-internals.h b/linux-user/user-internals.h
-index 0c0f9479..9611217c 100644
+index 0c0f94799..9611217c4 100644
 --- a/linux-user/user-internals.h
 +++ b/linux-user/user-internals.h
 @@ -28,6 +28,11 @@ extern char *exec_path;
