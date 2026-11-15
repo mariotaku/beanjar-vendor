@@ -14,6 +14,11 @@ class BeanjarVirglrenderer < Formula
   version "1.3.0+git20261111.01637fc7+beanjar1"
   license "MIT"
 
+  bottle do
+    root_url "https://github.com/mariotaku/beanjar-vendor/releases/download/beanjar-virglrenderer-1.3.0%2Bgit20261111.01637fc7%2Bbeanjar1"
+    sha256 cellar: :any, arm64_sequoia: "2c8bb856e1c942068cb79ce7d59fd365115336d7a342000d3992ba71e9c55c98"
+  end
+
   keg_only "it is Beanjar's own build, used only by Beanjar's QEMU"
 
   depends_on "libyaml" => :build

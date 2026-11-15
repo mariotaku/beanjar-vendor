@@ -12,6 +12,11 @@ class BeanjarQemu < Formula
   sha256 "ef786f2398cb5184600f69aef4d5d691efd44576a3cff4126d38d4c6fec87759"
   license "GPL-2.0-only"
 
+  bottle do
+    root_url "https://github.com/mariotaku/beanjar-vendor/releases/download/beanjar-qemu-10.0.2%2Bbeanjar2"
+    sha256 arm64_sequoia: "36b02c75f05fed5f2742a7deca25912852c1487118e38a0995edad191b874edd"
+  end
+
   keg_only "it is Beanjar's own build and would clash with Homebrew's qemu"
 
   depends_on "ninja" => :build

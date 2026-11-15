@@ -22,7 +22,7 @@ GitHub release named after the tag.
 | Directory | Tarball | Workflow |
 |---|---|---|
 | [`qemu/`](qemu/README.md) | `qemu-<version>-<arch>.tar.xz`: QEMU 10.0.2 (`qemu-system-aarch64`, `vhost-user-gpu`) with Beanjar's EGL and D-Bus display patches, for `beanjar-qemu` | `.github/workflows/qemu.yml` |
-| [`qemu-user/`](qemu-user/README.md) | `qemu-user-<version>-arm64.tar.xz`: QEMU 10.0.2's `qemu-arm`, static, with the compat bridge that hands a 32-bit ARM userland's system calls to Beanjar's arm64 guest kernel; arm64 only, as it runs inside the guest on every host | `.github/workflows/qemu-user.yml` |
+| [`qemu-user/`](qemu-user/README.md) | `qemu-user-<version>-<arch>.tar.xz`: QEMU 10.0.2's `qemu-arm`, static, with the compat bridge that hands a 32-bit ARM userland's system calls to the guest kernel; it runs inside the guest: arm64 for Beanjar's arm64 guest kernel on every host, amd64 (with `qemu-aarch64`) for the experimental x86-64 guest kernel | `.github/workflows/qemu-user.yml` |
 | [`neatvnc/`](neatvnc/README.md) | `neatvnc-<version>-<arch>.tar.xz`: neatvnc 1.0.4 with V4L2 H.264 fixes, and aml 1.0, for `beanjar-vnc` | `.github/workflows/neatvnc.yml` |
 | [`ffmpeg/`](ffmpeg/README.md) | `ffmpeg-<version>-<arch>.tar.xz`: FFmpeg 7.1.5 with the V4L2 Request API hwaccels, under `/usr/lib/beanjar/ffmpeg` | `.github/workflows/ffmpeg.yml` |
 | [`angle/`](angle/README.md) | `angle-<version>-macos-<arch>.tar.xz`: ANGLE's `libEGL` and `libGLESv2` with the Metal backend, macOS only | `.github/workflows/macos.yml` |
@@ -49,6 +49,8 @@ has the macOS, SDK and Xcode versions instead of the Debian release, and, instea
 formulae whose libraries it links, at Homebrew's paths) and `Links` (`otool -L`). The libraries
 have `@rpath` install names and the pkg-config files locate the tree, so the tarballs work
 wherever they are unpacked together. Every run uploads them as the artifacts
-`beanjar-<program>-macos-<arch>`; they are not released yet. The same stack is also built as
+`beanjar-<program>-macos-<arch>`. ANGLE's and virglrenderer's are released by hand from a run on
+`main`, with `SHA256SUMS`, as the releases `angle-<version>` (with ANGLE's source archive) and
+`virglrenderer-<version>`; QEMU's macOS tarball is not released. The same stack is also built as
 Homebrew bottles of Beanjar's formulae, which use Homebrew's libraries instead of linking them at
 Homebrew's paths ([`homebrew/`](homebrew/README.md)).

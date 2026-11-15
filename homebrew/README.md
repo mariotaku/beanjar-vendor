@@ -55,9 +55,9 @@ the macOS it was built on, for example `beanjar-qemu-10.0.2+beanjar1.arm64_sequo
 for example `beanjar-qemu-10.0.2+beanjar1`. Releasing means: publish the bottles in that
 release under the `filename` their JSON names, publish ANGLE's source archive
 in ANGLE's release, and commit the formulae from `beanjar-formulae-with-bottles`, whose bottle
-blocks name the root URL and each bottle's SHA-256, to Beanjar's `Formula/`. Until then the
-formulae have no bottle block, and beanjar-angle's source archive cannot be downloaded, so they
-install only in the workflow.
+blocks name the root URL and each bottle's SHA-256, to Beanjar's `Formula/`, then copy them here
+with `homebrew/sync.sh`. The releases are cut by hand from a run on `main`, tagged at that run's
+commit.
 
 ## Licence
 

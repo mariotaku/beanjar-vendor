@@ -13,6 +13,11 @@ class BeanjarAngle < Formula
   sha256 "2dfa4226e05361fb0ee156afdee6848542f11c2152d09165113c44cd5c9ddee0"
   license "BSD-3-Clause"
 
+  bottle do
+    root_url "https://github.com/mariotaku/beanjar-vendor/releases/download/beanjar-angle-8149.29d18232%2Bbeanjar1"
+    sha256 cellar: :any, arm64_sequoia: "7334ade90bb4bdb3f61cbf8d291aa53366692aaac3c091894696d0c9157115b8"
+  end
+
   keg_only "it is Beanjar's own build, used only by Beanjar's QEMU"
 
   depends_on "ninja" => :build

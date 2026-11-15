@@ -11,6 +11,11 @@ class BeanjarLibepoxy < Formula
   sha256 "a6f08482749647394c36963c030ba97710ef49355677a1564e7d6c1211d628d5"
   license "MIT"
 
+  bottle do
+    root_url "https://github.com/mariotaku/beanjar-vendor/releases/download/beanjar-libepoxy-1.5.11%2Bgit20260403.d1f952c4%2Bbeanjar1"
+    sha256 cellar: :any, arm64_sequoia: "b55c0e0e764214d33318ca087abba9206b13228fc86f355b523a1e90c1ca1757"
+  end
+
   keg_only "it is Beanjar's own build, used only by Beanjar's QEMU"
 
   depends_on "meson" => :build
