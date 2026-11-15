@@ -60,10 +60,24 @@ for d in virtio-gpu-gl-pci virtio-gpu-pci usb-redir virtio-9p-pci; do
 done
 run -accel help | tee "$DIR/accel.txt"
 
-# A VM without a guest: start it paused, ask QMP for its status, quit
+# A VM with the launcher's machine and devices but no guest (a -kernel of zeros): start it paused,
+# ask QMP for its status, quit. Its devices load what they need from share/qemu, reduced to
+# share-keep's files, when they are created: virtio-net-pci its option ROM
 sock=$DIR/qmp.sock
-run -M virt -cpu max -m 256 -nodefaults -S -display dbus,p2p=yes \
-	-audiodev dbus,id=snd0 -device virtio-gpu-pci \
+dd if=/dev/zero of="$DIR/kernel" bs=4096 count=1 2>/dev/null
+run -M virt -cpu max,pauth=off -m 256 -nodefaults -S -display dbus,p2p=yes \
+	-kernel "$DIR/kernel" \
+	-device virtio-gpu-pci \
+	-device pci-bridge,id=disks,chassis_nr=1,shpc=off \
+	-drive if=none,id=disk0,driver=null-co,read-zeroes=on \
+	-device virtio-blk-pci,drive=disk0,bus=disks,addr=0x1 \
+	-netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+	-fsdev local,id=share,path="$DIR",security_model=none,readonly=on \
+	-device virtio-9p-pci,fsdev=share,mount_tag=share \
+	-device virtio-rng-pci -device virtio-keyboard-pci -device virtio-tablet-pci \
+	-chardev null,id=con -device virtio-serial-pci -device virtconsole,chardev=con \
+	-device qemu-xhci -device virtio-balloon-pci \
+	-audiodev dbus,id=snd0 -device virtio-sound-pci,audiodev=snd0,streams=1 \
 	-qmp unix:"$sock",server=on,wait=off > "$DIR/vm.log" 2>&1 &
 pid=$!
 python3 -I - "$sock" <<'EOF' || { cat "$DIR/vm.log"; kill "$pid" 2>/dev/null; die "QMP"; }

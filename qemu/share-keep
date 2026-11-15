@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Mariotaku <git@mariotaku.me> and the Beanjar contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The files of QEMU's data directory (share/qemu) that Beanjar's VMs load. share-trim.sh deletes
+# everything else after `make install`, and fails if one of these is missing.
+#
+# One file per line, relative to share/qemu, then the QEMU targets (as in --target-list, without
+# -softmmu) that need it; a file without targets is kept for every target. A comment above each
+# entry says which device or option loads it.
+#
+# Measured on a webOS VM booted to the Home screen and stopped under strace: the arm64 virt
+# machine boots with -kernel, so no firmware (-bios, edk2, pflash), and its devices have no option
+# ROM except the NIC's. QEMU's own descriptors (firmware/*.json), keymaps (VNC, curses and
+# input-barrier only), trace-events-all (read by tracing scripts, not QEMU) and the other targets'
+# firmware are not loaded.
+
+# virtio-net-pci's option ROM (its romfile property): QEMU refuses to create the device without
+# it, whether or not the guest has firmware to run it
+efi-virtio.rom

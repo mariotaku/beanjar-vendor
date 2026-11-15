@@ -126,7 +126,7 @@ one without `libexec/`:
 | Path | |
 |---|---|
 | `bin/qemu-system-aarch64` | stripped, ad hoc signed again with QEMU's own entitlement (`com.apple.security.hypervisor`, for HVF), `LC_RPATH @loader_path/../lib` |
-| `share/qemu/` | QEMU's data directory |
+| `share/qemu/` | QEMU's data directory, reduced to the files `share-keep` lists (see below) |
 | `share/doc/qemu/` | as in the Debian tarball |
 | `BUILDINFO` | as in the Debian tarball, with the macOS and SDK versions instead of the Debian release, and instead of `Depends`: `Requires`, the angle and virglrenderer tarballs it was built against, `Homebrew`, the formulae and versions it links, and `Links`, every library the program loads (`otool -L`) |
 
@@ -140,10 +140,24 @@ under `lib/` with `@rpath` names is a later step.
 `qemu/test-tarball-macos.sh` unpacks the three tarballs into one directory and checks that every
 library resolves, that the program is the expected release, that `-display help` lists `dbus`,
 `-audiodev help` lists `coreaudio` and `dbus`, and `-device help` lists `virtio-gpu-gl-pci`,
-`virtio-gpu-pci`, `usb-redir` and `virtio-9p-pci`. Then it starts a VM without a guest (`virt`,
-`-cpu max`, `-display dbus,p2p=yes`, D-Bus audio, `virtio-gpu-pci`) with QMP on a unix socket,
-checks that `query-status` answers `prelaunch`, and quits it. No firmware or guest kernel is
-needed.
+`virtio-gpu-pci`, `usb-redir` and `virtio-9p-pci`. Then it starts a VM with the launcher's machine
+and devices but no guest (`virt`, `-cpu max,pauth=off`, a `-kernel` of zeros, `-display
+dbus,p2p=yes`, D-Bus audio and `virtio-sound-pci`, `virtio-gpu-pci`, `virtio-net-pci`,
+`virtio-blk-pci` behind a `pci-bridge`, `virtio-9p-pci`, the virtio input, serial, RNG and balloon
+devices, `qemu-xhci`) with QMP on a unix socket, checks that `query-status` answers `prelaunch`,
+and quits it. No firmware or guest kernel is needed.
+
+### The data directory
+
+QEMU installs firmware for every architecture it supports into `share/qemu` (edk2, SeaBIOS,
+OpenBIOS, network boot ROMs and more, about 315 MB), though Beanjar's VMs load almost none of
+it. `share-keep` lists the files they do load, each with the device or option that needs it,
+optionally for some targets only; `share-trim.sh SHARE_DIR TARGET...` deletes the rest of an
+installed data directory, and fails if a listed file is missing. `build-macos.sh` and the
+`beanjar-qemu` Homebrew formula run it. The list was measured with `strace` on a webOS VM booted to
+its Home screen: the `virt` machine boots with `-kernel`, so no firmware, and of its devices only
+`virtio-net-pci` has an option ROM, `efi-virtio.rom`, which QEMU will not create the device
+without.
 
 ## Licence
 

@@ -15,7 +15,7 @@
 # QEMU's installed prefix:
 #
 #   bin/qemu-system-aarch64    stripped, ad hoc signed with QEMU's own entitlements (HVF)
-#   share/qemu/                QEMU's data directory (firmware images, keymaps)
+#   share/qemu/                QEMU's data directory, reduced to what share-keep lists
 #   share/doc/qemu/            QEMU's licence texts, pc-bios-README, NOTICE
 #   BUILDINFO                  what was built from what and how, and what it needs
 #
@@ -144,7 +144,7 @@ else
 fi
 codesign --verify --verbose "$q"
 cp -R "$STAGE$PREFIX/share/qemu" "$ROOT/share/qemu"
-rm -rf "$ROOT/share/qemu/vhost-user"
+sh "$TOP/share-trim.sh" "$ROOT/share/qemu" aarch64
 for d in COPYING COPYING.LIB LICENSE; do
 	install -m 0644 "$S/$d" "$ROOT/share/doc/qemu/$d"
 done
