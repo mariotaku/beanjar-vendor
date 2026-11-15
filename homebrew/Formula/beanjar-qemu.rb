@@ -131,9 +131,10 @@ class BeanjarQemu < Formula
     links = shell_output("otool -L #{qemu}")
     assert_match "beanjar-libepoxy/lib/libepoxy", links
     assert_match "beanjar-virglrenderer/lib/libvirglrenderer", links
-    # HVF needs the hypervisor entitlement; QEMU's own install signs with it
-    system "codesign", "--verify", "--verbose", qemu
+    # HVF needs the hypervisor entitlement; QEMU's own install signs with it. On Intel an
+    # aarch64 QEMU has no HVF and is left unsigned.
     if Hardware::CPU.arm?
+      system "codesign", "--verify", "--verbose", qemu
       assert_match "com.apple.security.hypervisor", shell_output("codesign -d --entitlements - #{qemu} 2>&1")
     end
 
