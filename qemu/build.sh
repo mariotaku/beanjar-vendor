@@ -17,8 +17,8 @@
 #   bin/qemu-system-aarch64    stripped
 #   bin/qemu-system-x86_64     stripped, amd64 only
 #   libexec/vhost-user-gpu     QEMU's own vhost-user GPU backend, stripped
-#   share/qemu/                QEMU's data directory (firmware images, keymaps), without the
-#                              vhost-user JSON, which names the configure prefix
+#   share/qemu/                QEMU's data directory, reduced to what share-keep lists for the
+#                              targets built
 #   share/doc/qemu/            QEMU's licence texts, pc-bios-README, NOTICE
 #   BUILDINFO                  what was built from what and how, and its Depends
 #
@@ -120,8 +120,9 @@ STAGE=$SRC/stage
 make -C "$B" install DESTDIR="$STAGE" >/dev/null
 
 step "tree"
-# The programs and the data directory only: QEMU's other tools, the vhost-user JSON (it names
-# the configure prefix, not where the backend ends up), the desktop file and icons stay out. The
+# The programs and the data directory only: QEMU's other tools, the desktop file and icons stay
+# out, and of the data directory only the files share-keep lists for the targets built (not the
+# vhost-user JSON either, which names the configure prefix, not where the backend ends up). The
 # tree is assembled where dpkg-shlibdeps expects a package's files, in a debhelper-like layout.
 SHL=$SRC/shlibdeps
 ROOT=$SHL/debian/beanjar-qemu
@@ -131,7 +132,7 @@ for p in $systems libexec/vhost-user-gpu; do
 	strip --strip-unneeded "$ROOT/$p"
 done
 cp -R "$STAGE$PREFIX/share/qemu" "$ROOT/share/qemu"
-rm -rf "$ROOT/share/qemu/vhost-user"
+sh "$TOP/share-trim.sh" "$ROOT/share/qemu" $(echo "$targets" | sed 's/-softmmu//g; s/,/ /g')
 for d in COPYING COPYING.LIB LICENSE; do
 	install -m 0644 "$S/$d" "$ROOT/share/doc/qemu/$d"
 done

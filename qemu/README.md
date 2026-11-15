@@ -50,7 +50,7 @@ layout of QEMU's installed prefix, reduced to what Beanjar uses:
 | `bin/qemu-system-aarch64` | the emulator, stripped |
 | `bin/qemu-system-x86_64` | amd64 only: the x86-64 guest kernel's emulator (q35, KVM), stripped |
 | `libexec/vhost-user-gpu` | QEMU's own vhost-user GPU backend, stripped: on an ARM host with a render node the launcher runs the VM's virgl GPU in this separate process |
-| `share/qemu/` | QEMU's data directory (firmware images, keymaps), without `vhost-user/50-qemu-gpu.json`, which names the configure prefix rather than where the backend is installed |
+| `share/qemu/` | QEMU's data directory, reduced to the files `share-keep` lists for the tarball's targets: `efi-virtio.rom` (`virtio-net-pci`'s option ROM), and on amd64 for `qemu-system-x86_64` SeaBIOS (`bios-256k.bin`), `linuxboot_dma.bin` and `kvmvapic.bin`. `share-trim.sh` deletes the rest after `make install` (about 315 MB of other machines' firmware, keymaps and descriptors, and the vhost-user JSON, which names the configure prefix) and fails if a listed file is missing; `share-keep` says, per file, what loads it |
 | `share/doc/qemu/` | QEMU's `COPYING`, `COPYING.LIB` and `LICENSE`, its `pc-bios/README` (the firmware images' licences) as `pc-bios-README`, and `NOTICE` |
 | `BUILDINFO` | program, version, architecture, Debian release, the configure prefix, the source and patch checksums, the configure line, and `Depends` |
 
@@ -79,7 +79,9 @@ on the tarball: it unpacks it in another directory and, with `-L` pointing into 
 that `qemu-system-aarch64 --version` (and on amd64 `qemu-system-x86_64 --version`) is the expected
 release, that `-display help` lists
 `egl-headless` and `dbus` and `-device help` lists `virtio-gpu-gl-pci`, `vhost-user-gpu-pci` and
-`usb-redir`, and that `vhost-user-gpu --print-capabilities` answers. A build takes about two
+`usb-redir`, that `vhost-user-gpu --print-capabilities` answers, that `share/qemu` holds exactly
+the files `share-keep` lists, and that each program starts a paused VM without a guest (`-kernel`
+of zeros, `virtio-net-pci`) from it and answers QMP's `query-status`. A build takes about two
 minutes on 24 cores, dependencies included.
 
 ## Continuous integration and releases
