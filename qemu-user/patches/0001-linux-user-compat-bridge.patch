@@ -1,0 +1,391 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Sun, 15 Nov 2026 06:51:54 +0900
+Subject: [PATCH] linux-user: hand an ARM guest's system calls to the kernel's
+ compat table
+
+On an aarch64 host whose kernel has Beanjar's compat_bridge system call
+(0x7ff0), a 32-bit ARM guest's system calls run through the kernel's
+AArch32 compat syscall table instead of being converted here: the kernel's
+compat converters do the ABI, so every ioctl, DRM, evdev, uinput, V4L2,
+ALSA and driver-private one works without a table entry, and evdev, for
+one, returns 32-bit records. It needs guest addresses equal to host
+addresses (guest_base 0). qemu keeps the calls it must own (tasks and
+exec, signals, the address space, its fd translators and faked /proc
+files, what it fakes for the emulated CPU), listed in bridge_keep() in
+compat-bridge.c.inc and nowhere else.
+
+The bridge is on when the kernel answers getpid through the call and
+guest_base is 0, off otherwise or with QEMU_BRIDGE=0; QEMU_BRIDGE=1 says
+on stderr why it could not be turned on. r6 is passed to do_syscall as
+arg7, which the bridge forwards.
+
+What qemu logs as unimplemented also goes to /dev/kmsg once per message
+and process, with the pid and guest program (unimp-kmsg.c.inc), so a whole
+system's gaps show in dmesg; QEMU_UNIMP_KMSG=0 turns that off.
+---
+ linux-user/arm/cpu_loop.c      |   2 +-
+ linux-user/compat-bridge.c.inc | 205 +++++++++++++++++++++++++++++++++
+ linux-user/main.c              |   3 +
+ linux-user/syscall.c           |   8 ++
+ linux-user/unimp-kmsg.c.inc    |  62 ++++++++++
+ linux-user/user-internals.h    |   5 +
+ 6 files changed, 284 insertions(+), 1 deletion(-)
+ create mode 100644 linux-user/compat-bridge.c.inc
+ create mode 100644 linux-user/unimp-kmsg.c.inc
+
+diff --git a/linux-user/arm/cpu_loop.c b/linux-user/arm/cpu_loop.c
+index 7416e3216..2ece9cffc 100644
+--- a/linux-user/arm/cpu_loop.c
++++ b/linux-user/arm/cpu_loop.c
+@@ -411,7 +411,7 @@ void cpu_loop(CPUARMState *env)
+                                      env->regs[3],
+                                      env->regs[4],
+                                      env->regs[5],
+-                                     0, 0);
++                                     env->regs[6], 0);
+                     if (ret == -QEMU_ERESTARTSYS) {
+                         env->regs[15] -= env->thumb ? 2 : 4;
+                     } else if (ret != -QEMU_ESIGRETURN) {
+diff --git a/linux-user/compat-bridge.c.inc b/linux-user/compat-bridge.c.inc
+new file mode 100644
+index 000000000..b7ea5cde3
+--- /dev/null
++++ b/linux-user/compat-bridge.c.inc
+@@ -0,0 +1,205 @@
++/*
++ * The compat bridge: a 32-bit ARM guest on an aarch64 host whose kernel has Beanjar's
++ * compat_bridge system call (0x7ff0; its guest kernel's patch "arm64: a system call for 64-bit
++ * tasks that runs one AArch32 call"). With guest addresses equal to host addresses (guest_base
++ * 0), most system calls are not converted here but handed to the kernel's AArch32 compat syscall
++ * table, which runs them as a 32-bit task's: the kernel's compat converters for ioctl, DRM, V4L2,
++ * ALSA, evdev and the rest do the ABI, and no ioctl needs a table entry here. qemu keeps what it
++ * must own, listed in bridge_keep() and nowhere else.
++ *
++ * On by default when the kernel answers the call and guest_base is 0; QEMU_BRIDGE=0 turns it
++ * off, and QEMU_BRIDGE=1 reports on stderr why it could not be turned on. Included by syscall.c.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#define HOST_NR_compat_bridge 0x7ff0
++
++static bool bridge_on;
++
++/* the call's arguments: the number and r0-r6, two per 64-bit register */
++#define BRIDGE_ARGS(num, a1, a2, a3, a4, a5, a6, a7)                \
++    (uint64_t)(uint32_t)(num) | (uint64_t)(uint32_t)(a1) << 32,     \
++    (uint64_t)(uint32_t)(a2) | (uint64_t)(uint32_t)(a3) << 32,      \
++    (uint64_t)(uint32_t)(a4) | (uint64_t)(uint32_t)(a5) << 32,      \
++    (uint64_t)(uint32_t)(a6) | (uint64_t)(uint32_t)(a7) << 32
++
++void bridge_init(void)
++{
++    const char *e = getenv("QEMU_BRIDGE");
++    bool asked = e && e[0] == '1';
++    long pid;
++
++    if (e && e[0] == '0') {
++        return;
++    }
++    if (guest_base != 0) {
++        if (asked) {
++            fprintf(stderr, "qemu: compat bridge needs guest_base 0 (have 0x%lx); off\n",
++                    (unsigned long)guest_base);
++        }
++        return;
++    }
++    /* the kernel has the call if it answers getpid through it */
++    pid = syscall(HOST_NR_compat_bridge, BRIDGE_ARGS(TARGET_NR_getpid, 0, 0, 0, 0, 0, 0, 0));
++    if (pid != getpid()) {
++        if (asked) {
++            fprintf(stderr, "qemu: the kernel has no compat bridge (%s); off\n",
++                    pid == -1 ? strerror(errno) : "wrong answer");
++        }
++        return;
++    }
++    bridge_on = true;
++}
++
++static bool bridge_fd_translated(abi_long fd)
++{
++    return fd_trans_target_to_host_data(fd) || fd_trans_host_to_target_data(fd)
++        || fd_trans_target_to_host_addr(fd);
++}
++
++/*
++ * The calls qemu keeps, run by do_syscall1() as without the bridge; every other call goes to
++ * the kernel. Each group says why it cannot be forwarded.
++ */
++static bool bridge_keep(int num, abi_long arg1, abi_long arg2)
++{
++    switch (num) {
++    /* tasks and programs: qemu's CPU state, its threads and its own exec */
++    case TARGET_NR_exit:
++    case TARGET_NR_exit_group:
++    case TARGET_NR_fork:
++    case TARGET_NR_vfork:
++    case TARGET_NR_clone:
++#ifdef TARGET_NR_clone3
++    case TARGET_NR_clone3:
++#endif
++    case TARGET_NR_execve:
++#ifdef TARGET_NR_execveat
++    case TARGET_NR_execveat:
++#endif
++    case TARGET_NR_set_tid_address:
++    case TARGET_NR_restart_syscall:
++    case TARGET_NR_ptrace:
++    case TARGET_NR_personality:
++    /* signals: qemu delivers them, and its guest-to-host signal numbers are not the identity */
++    case TARGET_NR_sigaction:
++    case TARGET_NR_rt_sigaction:
++    case TARGET_NR_sigprocmask:
++    case TARGET_NR_rt_sigprocmask:
++    case TARGET_NR_sigsuspend:
++    case TARGET_NR_rt_sigsuspend:
++    case TARGET_NR_sigpending:
++    case TARGET_NR_rt_sigpending:
++    case TARGET_NR_rt_sigtimedwait:
++#ifdef TARGET_NR_rt_sigtimedwait_time64
++    case TARGET_NR_rt_sigtimedwait_time64:
++#endif
++    case TARGET_NR_rt_sigqueueinfo:
++    case TARGET_NR_rt_tgsigqueueinfo:
++    case TARGET_NR_sigaltstack:
++    case TARGET_NR_sigreturn:
++    case TARGET_NR_rt_sigreturn:
++    case TARGET_NR_signalfd:
++    case TARGET_NR_signalfd4:
++    case TARGET_NR_kill:
++    case TARGET_NR_tkill:
++    case TARGET_NR_tgkill:
++#ifdef TARGET_NR_pidfd_send_signal
++    case TARGET_NR_pidfd_send_signal:
++#endif
++    case TARGET_NR_pause:
++    case TARGET_NR_wait4:
++    case TARGET_NR_waitid:
++    case TARGET_NR_ppoll:
++    case TARGET_NR_pselect6:
++#ifdef TARGET_NR_ppoll_time64
++    case TARGET_NR_ppoll_time64:
++#endif
++#ifdef TARGET_NR_pselect6_time64
++    case TARGET_NR_pselect6_time64:
++#endif
++    case TARGET_NR_epoll_pwait:
++#ifdef TARGET_NR_epoll_pwait2
++    case TARGET_NR_epoll_pwait2:
++#endif
++    case TARGET_NR_timer_create:
++    case TARGET_NR_mq_notify:
++    case TARGET_NR_prctl:
++    /* the guest address space: qemu's page flags and translated code follow it */
++    case TARGET_NR_mmap2:
++    case TARGET_NR_munmap:
++    case TARGET_NR_mprotect:
++    case TARGET_NR_mremap:
++    case TARGET_NR_brk:
++    case TARGET_NR_shmat:
++    case TARGET_NR_shmdt:
++    case TARGET_NR_madvise:
++    case TARGET_NR_remap_file_pages:
++    /* qemu's file descriptor translators (fd_trans) and its faked /proc files */
++    case TARGET_NR_close:
++#ifdef TARGET_NR_close_range
++    case TARGET_NR_close_range:
++#endif
++    case TARGET_NR_dup:
++    case TARGET_NR_dup2:
++    case TARGET_NR_dup3:
++    case TARGET_NR_open:
++    case TARGET_NR_openat:
++#ifdef TARGET_NR_openat2
++    case TARGET_NR_openat2:
++#endif
++    case TARGET_NR_readlink:
++    case TARGET_NR_readlinkat:
++    /* what qemu fakes for the emulated CPU and its own 64-bit process */
++    case TARGET_NR_uname:
++    case TARGET_NR_ugetrlimit:
++    case TARGET_NR_setrlimit:
++    case TARGET_NR_prlimit64:
++        return true;
++    case TARGET_NR_fcntl:
++    case TARGET_NR_fcntl64:
++        return arg2 == 10 || arg2 == 11;        /* F_SETSIG, F_GETSIG: signal numbers */
++    case TARGET_NR_read:
++    case TARGET_NR_write:
++    case TARGET_NR_readv:
++    case TARGET_NR_writev:
++    case TARGET_NR_pread64:
++    case TARGET_NR_pwrite64:
++    case TARGET_NR_preadv:
++    case TARGET_NR_pwritev:
++    case TARGET_NR_recv:
++    case TARGET_NR_recvfrom:
++    case TARGET_NR_recvmsg:
++    case TARGET_NR_recvmmsg:
++    case TARGET_NR_send:
++    case TARGET_NR_sendto:
++    case TARGET_NR_sendmsg:
++    case TARGET_NR_sendmmsg:
++    case TARGET_NR_bind:
++    case TARGET_NR_connect:
++        return bridge_fd_translated(arg1);  /* only where qemu translates the fd's data */
++    }
++    return false;
++}
++
++/* true if the bridge ran the call, with its result in *ret */
++static bool bridge_syscall(int num, abi_long a1, abi_long a2, abi_long a3, abi_long a4,
++                           abi_long a5, abi_long a6, abi_long a7, abi_long *ret)
++{
++    long r;
++
++    if (!bridge_on || num < 0 || bridge_keep(num, a1, a2)) {
++        return false;
++    }
++    r = safe_syscall(HOST_NR_compat_bridge, BRIDGE_ARGS(num, a1, a2, a3, a4, a5, a6, a7));
++    if (r == -1) {
++        if (errno == ENOSYS) {
++            qemu_log_mask(LOG_UNIMP, "bridge: syscall %d: ENOSYS from the kernel\n", num);
++        }
++        *ret = -host_to_target_errno(errno);
++    } else {
++        *ret = (abi_long)r;
++    }
++    return true;
++}
+diff --git a/linux-user/main.c b/linux-user/main.c
+index e2ec5970b..6ace61a59 100644
+--- a/linux-user/main.c
++++ b/linux-user/main.c
+@@ -1032,6 +1032,9 @@ int main(int argc, char **argv, char **envp)
+        the real value of GUEST_BASE into account.  */
+     tcg_prologue_init();
+ 
++#ifdef QEMU_COMPAT_BRIDGE
++    bridge_init();
++#endif
+     target_cpu_copy_regs(env, regs);
+ 
+     if (gdbstub) {
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index 8bfe4912e..4896c37ae 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -146,6 +146,7 @@
+ #include "special-errno.h"
+ #include "qapi/error.h"
+ #include "fd-trans.h"
++#include "unimp-kmsg.c.inc"
+ #include "user/cpu_loop.h"
+ 
+ #ifndef CLONE_IO
+@@ -13877,6 +13878,10 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
+     return ret;
+ }
+ 
++#ifdef QEMU_COMPAT_BRIDGE
++#include "compat-bridge.c.inc"
++#endif
++
+ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
+                     abi_long arg2, abi_long arg3, abi_long arg4,
+                     abi_long arg5, abi_long arg6, abi_long arg7,
+@@ -13906,6 +13911,9 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
+         print_syscall(cpu_env, num, arg1, arg2, arg3, arg4, arg5, arg6);
+     }
+ 
++#ifdef QEMU_COMPAT_BRIDGE
++    if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, &ret))
++#endif
+     ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
+                       arg5, arg6, arg7, arg8);
+ 
+diff --git a/linux-user/unimp-kmsg.c.inc b/linux-user/unimp-kmsg.c.inc
+new file mode 100644
+index 000000000..ba797cb1e
+--- /dev/null
++++ b/linux-user/unimp-kmsg.c.inc
+@@ -0,0 +1,62 @@
++/*
++ * What qemu logs as unimplemented (LOG_UNIMP) also goes to the kernel log, for a qemu-arm that
++ * runs a whole system's 32-bit userland (Beanjar's compat bridge): once per distinct message and
++ * process, tagged with the pid and the guest program, so the system's gaps land in dmesg.
++ * Without write access to /dev/kmsg, or with QEMU_UNIMP_KMSG=0, nothing is written there.
++ * Included by syscall.c, whose qemu_log_mask(LOG_UNIMP, ...) calls it replaces.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++static void G_GNUC_PRINTF(1, 2) unimp_kmsg(const char *fmt, ...)
++{
++    static int fd = -2;
++    static uint32_t seen[512];
++    static int nseen;
++    char msg[256], line[400];
++    uint32_t h = 2166136261u;
++    va_list ap;
++    int n;
++
++    if (fd == -2) {
++        const char *e = getenv("QEMU_UNIMP_KMSG");
++        fd = (e && e[0] == '0') ? -1 : open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
++    }
++    if (fd < 0) {
++        return;
++    }
++    va_start(ap, fmt);
++    vsnprintf(msg, sizeof(msg), fmt, ap);
++    va_end(ap);
++    for (const char *c = msg; *c; c++) {
++        h = (h ^ (uint8_t)*c) * 16777619u;
++    }
++    for (int i = 0; i < nseen; i++) {
++        if (seen[i] == h) {
++            return;
++        }
++    }
++    if (nseen < (int)ARRAY_SIZE(seen)) {
++        seen[nseen++] = h;
++    }
++    n = strlen(msg);
++    if (n && msg[n - 1] == '\n') {
++        msg[n - 1] = 0;
++    }
++    n = snprintf(line, sizeof(line), "<7>qemu-arm[%d %s]: %s\n", getpid(),
++                 exec_path ? exec_path : "?", msg);
++    if (write(fd, line, n) < 0) {
++        /* nothing to do */
++    }
++}
++
++#undef qemu_log_mask
++#define qemu_log_mask(MASK, FMT, ...)                       \
++    do {                                                    \
++        if ((MASK) & LOG_UNIMP) {                           \
++            unimp_kmsg(FMT, ## __VA_ARGS__);                \
++        }                                                   \
++        if (unlikely(qemu_loglevel_mask(MASK))) {           \
++            qemu_log(FMT, ## __VA_ARGS__);                  \
++        }                                                   \
++    } while (0)
+diff --git a/linux-user/user-internals.h b/linux-user/user-internals.h
+index 4aa253b56..0c0f94799 100644
+--- a/linux-user/user-internals.h
++++ b/linux-user/user-internals.h
+@@ -23,6 +23,11 @@
+ #include "qemu/log.h"
+ 
+ extern char *exec_path;
++/* the compat bridge (compat-bridge.c.inc): a 32-bit ARM guest on an aarch64 host */
++#if defined(TARGET_ARM) && !defined(TARGET_AARCH64) && defined(__aarch64__)
++#define QEMU_COMPAT_BRIDGE
++void bridge_init(void);
++#endif
+ void init_task_state(TaskState *ts);
+ void task_settid(TaskState *);
+ void stop_all_tasks(void);
