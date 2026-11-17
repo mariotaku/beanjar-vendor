@@ -1,0 +1,399 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Tue, 17 Nov 2026 12:00:00 +0900
+Subject: [PATCH] linux-user: qemu's call_rcu thread hidden from the guest's
+ task list
+
+qemu's call_rcu thread, which it starts with the process and again in
+every forked child, is a task of the guest process, where a native
+process has only its program's threads. A program that checks it is
+single-threaded by /proc/self/task found two tasks: Chromium's sandbox
+probe, in a child the zygote forks, stats /proc/self/task, sees a link
+count of 4, reports "Cannot start sandbox, if process is already
+multi-threaded", and the zygote exits, so no web app starts.
+
+The call_rcu thread records its TID before rcu_init_complete() returns,
+in a forked child too. In the guest's view of its own process, that TID
+is left out: the records of getdents and getdents64 on its
+/proc/<pid>/task (/proc/self/task or the numeric path), the link count
+of that directory from stat, lstat, fstat, their 64-bit forms, fstatat
+and statx, and the Threads: line of the faked /proc/self/status
+(/proc/self/stat's num_threads already counted guest threads). The
+directory is recognised by its device and inode, so a relative path or
+an fd opened through a /proc fd counts as well. This works on the
+results of qemu's own calls and the bridge's alike. A directory read
+whose records were all hidden is read on rather than ending the
+directory. Another process's view of the task list is unchanged.
+---
+diff --git a/include/qemu/rcu.h b/include/qemu/rcu.h
+index fea058aa9..2d464c432 100644
+--- a/include/qemu/rcu.h
++++ b/include/qemu/rcu.h
+@@ -143,6 +143,12 @@ struct rcu_head {
+ void call_rcu1(struct rcu_head *head, RCUCBFunc *func);
+ void drain_call_rcu(void);
+ 
++/*
++ * The TID of this process's call_rcu thread, 0 before it has started: user-mode emulation hides
++ * it from the guest's view of its own tasks.
++ */
++int rcu_call_thread_id(void);
++
+ /* The operands of the minus operator must have the same type,
+  * which must be the one that we specify in the cast.
+  */
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+index caae00c09..2a91b61f7 100644
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -8375,6 +8375,33 @@ static void guest_mem_read(CPUArchState *cpu_env, struct guest_mem *m)
+     }
+ }
+ 
++/*
++ * The guest's view of its own task list, without qemu's own thread. Natively a process has only
++ * its program's threads; under qemu its call_rcu thread, which qemu starts with the process and
++ * again in every forked child, is a task as well. Programs that check they are single-threaded by
++ * /proc/self/task's link count or listing (Chromium's sandbox, in a freshly forked child) found
++ * two tasks. Only that thread, by its TID, is hidden; other processes' views are left alone.
++ */
++static long qemu_thread_tid(void)
++{
++    long tid = rcu_call_thread_id();
++
++    return tid > 0 && tid != getpid() ? tid : 0;
++}
++
++/* the number of qemu's threads among this process's tasks: 0 or 1 */
++static int qemu_thread_count(void)
++{
++    char path[64];
++    long tid = qemu_thread_tid();
++
++    if (!tid) {
++        return 0;
++    }
++    snprintf(path, sizeof(path), "/proc/self/task/%ld", tid);
++    return access(path, F_OK) == 0;
++}
++
+ static int open_self_status(CPUArchState *cpu_env, int fd)
+ {
+     static uint64_t peak_kb, hwm_kb;
+@@ -8410,6 +8437,12 @@ static int open_self_status(CPUArchState *cpu_env, int fd)
+         GUEST_KB("VmLib", m.exec / 1024 - MIN(m.exec / 1024, exe_kb))
+         GUEST_KB("VmSwap", m.swap)
+ #undef GUEST_KB
++        if (g_str_has_prefix(line, "Threads:")) {
++            int n = atoi(line + strlen("Threads:"));
++
++            g_string_append_printf(out, "Threads:\t%d\n", MAX(n - qemu_thread_count(), 1));
++            continue;
++        }
+         g_string_append_printf(out, "%s\n", line);
+     }
+     return write(fd, out->str, out->len) == out->len ? 0 : -1;
+@@ -8457,6 +8490,244 @@ static bool is_qemu_thread(abi_long pid)
+     return true;
+ }
+ 
++/*
++ * True if dev and ino are this process's /proc/<pid>/task. procfs inode numbers are 32-bit and
++ * unique within it, so the low 32 bits are compared: a guest's struct may hold no more.
++ */
++static bool is_own_task_dir(uint64_t dev, uint64_t ino)
++{
++    struct stat st;
++
++    return stat("/proc/self/task", &st) == 0 && (uint32_t)st.st_dev == (uint32_t)dev
++        && (uint32_t)st.st_ino == (uint32_t)ino;
++}
++
++/* the link count of /proc/self/task without qemu's thread, in *nlink; false if not that */
++static bool task_dir_nlink(unsigned mode, uint64_t dev, uint64_t ino, uint64_t *nlink)
++{
++    int hidden;
++
++    if (!S_ISDIR(mode) || *nlink <= 3 || !is_own_task_dir(dev, ino)) {
++        return false;
++    }
++    hidden = qemu_thread_count();
++    if (!hidden) {
++        return false;
++    }
++    *nlink -= hidden;
++    return true;
++}
++
++#define HIDE_STAT_NLINK(type, addr) do {                                        \
++        type *t_;                                                               \
++        uint64_t dev_, ino_, nlink_;                                            \
++        unsigned mode_;                                                         \
++                                                                                \
++        if (lock_user_struct(VERIFY_WRITE, t_, addr, 1)) {                      \
++            __get_user(dev_, &t_->st_dev);                                      \
++            __get_user(ino_, &t_->st_ino);                                      \
++            __get_user(mode_, &t_->st_mode);                                    \
++            __get_user(nlink_, &t_->st_nlink);                                  \
++            if (task_dir_nlink(mode_, dev_, ino_, &nlink_)) {                   \
++                __put_user(nlink_, &t_->st_nlink);                              \
++            }                                                                   \
++            unlock_user_struct(t_, addr, 1);                                    \
++        }                                                                       \
++    } while (0)
++
++#if (defined(TARGET_NR_stat64) || defined(TARGET_NR_lstat64) ||     \
++     defined(TARGET_NR_fstat64) || defined(TARGET_NR_fstatat64) ||  \
++     defined(TARGET_NR_newfstatat))
++/* the struct host_to_target_stat64() writes */
++static void hide_stat64_nlink(CPUArchState *cpu_env, abi_ulong addr)
++{
++#if defined(TARGET_ARM) && defined(TARGET_ABI32)
++    if (cpu_env->eabi) {
++        HIDE_STAT_NLINK(struct target_eabi_stat64, addr);
++        return;
++    }
++#endif
++#if defined(TARGET_HAS_STRUCT_STAT64)
++    HIDE_STAT_NLINK(struct target_stat64, addr);
++#else
++    HIDE_STAT_NLINK(struct target_stat, addr);
++#endif
++}
++#endif
++
++#if defined(TARGET_NR_statx)
++static void hide_statx_nlink(abi_ulong addr)
++{
++    struct target_statx *t;
++    uint32_t mask, major_, minor_, nlink32;
++    uint64_t ino, nlink;
++    uint16_t mode;
++
++    if (!lock_user_struct(VERIFY_WRITE, t, addr, 1)) {
++        return;
++    }
++    __get_user(mask, &t->stx_mask);
++    __get_user(mode, &t->stx_mode);
++    __get_user(ino, &t->stx_ino);
++    __get_user(nlink32, &t->stx_nlink);
++    __get_user(major_, &t->stx_dev_major);
++    __get_user(minor_, &t->stx_dev_minor);
++    nlink = nlink32;
++    if ((mask & (STATX_TYPE | STATX_NLINK | STATX_INO)) == (STATX_TYPE | STATX_NLINK | STATX_INO)
++        && task_dir_nlink(mode, makedev(major_, minor_), ino, &nlink)) {
++        nlink32 = nlink;
++        __put_user(nlink32, &t->stx_nlink);
++    }
++    unlock_user_struct(t, addr, 1);
++}
++#endif
++
++/* tid from a /proc/<pid>/task entry's name, or 0 */
++static long task_entry_tid(const char *name, size_t max)
++{
++    long tid = 0;
++    size_t i;
++
++    for (i = 0; i < max && name[i]; i++) {
++        if (name[i] < '0' || name[i] > '9' || tid > INT_MAX / 10) {
++            return 0;
++        }
++        tid = tid * 10 + name[i] - '0';
++    }
++    return i < max ? tid : 0;
++}
++
++/*
++ * The records of a getdents (dirent64: getdents64) result of len bytes at addr without qemu's
++ * thread if fd is /proc/self/task; returns the new length. A result of only such records
++ * becomes 0, which the caller does not return as the end of the directory but reads on.
++ */
++static abi_long hide_task_dirents(int fd, abi_ulong addr, abi_long len, bool dirent64)
++{
++    size_t name_off = dirent64 ? offsetof(struct target_dirent64, d_name)
++                               : offsetof(struct target_dirent, d_name);
++    abi_long in = 0, out = 0;
++    int own = -1;               /* unknown until a record needs it */
++    long hide = qemu_thread_tid();
++    struct stat st;
++    char *buf;
++
++    if (!hide) {
++        return len;
++    }
++    buf = lock_user(VERIFY_WRITE, addr, len, 1);
++    if (!buf) {
++        return len;
++    }
++    while (in < len) {
++        abi_ushort reclen;
++        long tid;
++
++        if (dirent64) {
++            __get_user(reclen, &((struct target_dirent64 *)(buf + in))->d_reclen);
++        } else {
++            __get_user(reclen, &((struct target_dirent *)(buf + in))->d_reclen);
++        }
++        if (reclen <= name_off || reclen > len - in) {
++            break;      /* not a record: leave the rest as it is */
++        }
++        tid = task_entry_tid(buf + in + name_off, reclen - name_off);
++        if (tid == hide) {
++            if (own < 0) {
++                own = fstat(fd, &st) == 0 && is_own_task_dir(st.st_dev, st.st_ino);
++            }
++            if (own) {
++                in += reclen;
++                continue;
++            }
++        }
++        if (out != in) {
++            memmove(buf + out, buf + in, reclen);
++        }
++        out += reclen;
++        in += reclen;
++    }
++    if (in < len && out != in) {
++        memmove(buf + out, buf + in, len - in);
++    }
++    out += len - in;
++    unlock_user(buf, addr, out);
++    return out;
++}
++
++/*
++ * Applied to every call's result, the kernel's through a bridge as qemu's own: hides qemu's
++ * thread from /proc/self/task's listing and link count. True if the call is to be made again
++ * (a directory read whose records were all hidden).
++ */
++static bool hide_qemu_threads(CPUArchState *cpu_env, int num, abi_long *ret, abi_long arg1,
++                              abi_long arg2, abi_long arg3, abi_long arg4, abi_long arg5)
++{
++    if (is_error(*ret)) {
++        return false;
++    }
++    switch (num) {
++#ifdef TARGET_NR_getdents
++    case TARGET_NR_getdents:
++        if (*ret > 0) {
++            *ret = hide_task_dirents(arg1, arg2, *ret, false);
++            return *ret == 0;
++        }
++        break;
++#endif
++#ifdef TARGET_NR_getdents64
++    case TARGET_NR_getdents64:
++        if (*ret > 0) {
++            *ret = hide_task_dirents(arg1, arg2, *ret, true);
++            return *ret == 0;
++        }
++        break;
++#endif
++#ifdef TARGET_NR_stat64
++    case TARGET_NR_stat64:
++#endif
++#ifdef TARGET_NR_lstat64
++    case TARGET_NR_lstat64:
++#endif
++#ifdef TARGET_NR_fstat64
++    case TARGET_NR_fstat64:
++#endif
++#if defined(TARGET_NR_stat64) || defined(TARGET_NR_lstat64) || defined(TARGET_NR_fstat64)
++        hide_stat64_nlink(cpu_env, arg2);
++        break;
++#endif
++#ifdef TARGET_NR_fstatat64
++    case TARGET_NR_fstatat64:
++#endif
++#ifdef TARGET_NR_newfstatat
++    case TARGET_NR_newfstatat:
++#endif
++#if defined(TARGET_NR_fstatat64) || defined(TARGET_NR_newfstatat)
++        hide_stat64_nlink(cpu_env, arg3);
++        break;
++#endif
++#ifdef TARGET_NR_stat
++    case TARGET_NR_stat:
++#endif
++#ifdef TARGET_NR_lstat
++    case TARGET_NR_lstat:
++#endif
++#ifdef TARGET_NR_fstat
++    case TARGET_NR_fstat:
++#endif
++#if defined(TARGET_NR_stat) || defined(TARGET_NR_lstat) || defined(TARGET_NR_fstat)
++        HIDE_STAT_NLINK(struct target_stat, arg2);
++        break;
++#endif
++#ifdef TARGET_NR_statx
++    case TARGET_NR_statx:
++        hide_statx_nlink(arg5);
++        break;
++#endif
++    }
++    return false;
++}
++
+ static int open_self_auxv(CPUArchState *cpu_env, int fd)
+ {
+     CPUState *cpu = env_cpu(cpu_env);
+@@ -14112,14 +14383,16 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
+         print_syscall(cpu_env, num, arg1, arg2, arg3, arg4, arg5, arg6);
+     }
+ 
++    do {
+ #ifdef QEMU_COMPAT_BRIDGE
+-    if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, &ret))
++        if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, &ret))
+ #endif
+ #ifdef QEMU_IOCTL_BRIDGE
+-    if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, &ret))
++        if (!bridge_syscall(num, arg1, arg2, arg3, arg4, arg5, &ret))
+ #endif
+-    ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
+-                      arg5, arg6, arg7, arg8);
++        ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
++                          arg5, arg6, arg7, arg8);
++    } while (hide_qemu_threads(cpu_env, num, &ret, arg1, arg2, arg3, arg4, arg5));
+ 
+     if (unlikely(qemu_loglevel_mask(LOG_STRACE))) {
+         print_syscall_ret(cpu_env, num, ret, arg1, arg2,
+diff --git a/util/rcu.c b/util/rcu.c
+index fa32c942e..614e52ed1 100644
+--- a/util/rcu.c
++++ b/util/rcu.c
+@@ -252,10 +252,20 @@ retry:
+     return node;
+ }
+ 
++static int call_rcu_tid;
++static QemuSemaphore call_rcu_started;
++
++int rcu_call_thread_id(void)
++{
++    return qatomic_read(&call_rcu_tid);
++}
++
+ static void *call_rcu_thread(void *opaque)
+ {
+     struct rcu_head *node;
+ 
++    qatomic_set(&call_rcu_tid, qemu_get_thread_id());
++    qemu_sem_post(&call_rcu_started);
+     rcu_register_thread();
+ 
+     for (;;) {
+@@ -412,8 +422,12 @@ static void rcu_init_complete(void)
+     /* The caller is assumed to have BQL, so the call_rcu thread
+      * must have been quiescent even after forking, just recreate it.
+      */
++    qemu_sem_init(&call_rcu_started, 0);
+     qemu_thread_create(&thread, "call_rcu", call_rcu_thread,
+                        NULL, QEMU_THREAD_DETACHED);
++    /* its TID is known before anything can ask for it, in a forked child too */
++    qemu_sem_wait(&call_rcu_started);
++    qemu_sem_destroy(&call_rcu_started);
+ 
+     rcu_register_thread();
+ }

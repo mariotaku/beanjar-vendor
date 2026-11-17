@@ -65,7 +65,7 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
 - `0006` linux-user: `kill()` of one of qemu's own threads (its RCU thread), which shows in
   `/proc/self/task` and `cgroup.threads` but would not exist natively, answers ESRCH:
   systemd-udevd SIGKILLs every other task of its cgroup after each event and killed itself.
-  `0003` to `0006` are generic linux-user code: `qemu-aarch64` has them as well.
+  `0003` to `0006` and `0008` are generic linux-user code: `qemu-aarch64` has them as well.
 - `0007` linux-user: `qemu-aarch64` on an x86-64 kernel passes the ioctls it has no table entry
   for to the kernel unchanged, where stock qemu answers ENOTTY. AArch64 and x86-64 are both LP64
   with the same alignment and the same ioctl number encoding, so the payload's layout is the
@@ -76,6 +76,15 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   (`qemu-arm`, `qemu-aarch64`). An x86-64 process has a 47-bit address space where an AArch64
   one has 48: qemu maps the guest where the host kernel puts it, below 128 TiB, so only a guest's
   fixed mapping above that would fail; programs take the addresses `mmap` gives them.
+
+- `0008` linux-user: qemu's call_rcu thread, which it starts with the process and again in every
+  forked child, is left out of the guest's view of its own tasks, as natively the process has only
+  its program's threads: the records of `getdents` and `getdents64` on its `/proc/<pid>/task`
+  (`/proc/self/task` or the numeric path), that directory's link count from the `stat` calls and
+  `statx`, and the `Threads:` line of `/proc/self/status`. The thread records its TID when it
+  starts, so no guest thread is ever hidden; another process's view is unchanged. Chromium's
+  sandbox probe, in a child its zygote forks, counts `/proc/self/task`'s links, found two tasks
+  and the zygote exited, so no web app started.
 
 ## The tarball
 
