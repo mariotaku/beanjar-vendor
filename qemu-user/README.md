@@ -85,6 +85,13 @@ the release tarball, which `build.sh` downloads from `download.qemu.org` and che
   starts, so no guest thread is ever hidden; another process's view is unchanged. Chromium's
   sandbox probe, in a child its zygote forks, counts `/proc/self/task`'s links, found two tasks
   and the zygote exited, so no web app started.
+- `0009` linux-user: the netlink families above `NETLINK_SMC` (22), which no mainline subsystem
+  uses, are created and their messages passed unchanged, where stock qemu refuses every family but
+  route, uevent and audit. webOS's Bluetooth service learns that its MediaTek adapter is plugged
+  in from that driver's own family (29), so under `qemu-arm` it never powered the adapter on.
+  Passing unchanged is right for messages without pointer- or long-sized fields, as `nlmsghdr`
+  and the MediaTek driver's registration and state messages are; mainline's other families are
+  still refused.
 
 ## The tarball
 

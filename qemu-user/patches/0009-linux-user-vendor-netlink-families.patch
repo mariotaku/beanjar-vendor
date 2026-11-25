@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Wed, 25 Nov 2026 21:00:00 +0900
+Subject: [PATCH] linux-user: vendor netlink families passed through
+
+socket(AF_NETLINK, ..., protocol) was refused with EPROTONOSUPPORT for
+every protocol but NETLINK_ROUTE, NETLINK_KOBJECT_UEVENT and
+NETLINK_AUDIT. webOS's Bluetooth service learns that its MediaTek adapter
+is plugged in from the driver's own family (29), so under qemu-arm it
+never powered the adapter on.
+
+Families above NETLINK_SMC (22), which no mainline subsystem uses, are
+now created and their messages passed unchanged. That holds for messages
+without pointer- or long-sized fields, as nlmsghdr and the MediaTek
+driver's registration and state messages are. Mainline's other families
+are still refused.
+---
+diff --git a/linux-user/syscall.c b/linux-user/syscall.c
+--- a/linux-user/syscall.c
++++ b/linux-user/syscall.c
+@@ -3170,6 +3170,17 @@
+     return fd;
+ }
+ 
++/*
++ * The netlink families after mainline's last (NETLINK_SMC, 22) are a vendor driver's own, such
++ * as MediaTek's Bluetooth driver's (btmtk_usb: 29 or 30), which webOS's Bluetooth service opens
++ * to learn the adapter's USB state. Their messages pass unchanged, with no translator: that is
++ * right only for messages without pointer- or long-sized fields, whose layout is then the same
++ * for a 32-bit ARM guest and a 64-bit host. The ones known hold that: nlmsghdr (a u32, two
++ * u16, two u32) followed by MediaTek's registration (the string "btmngr") and its state
++ * replies (two int32). Mainline's other families stay refused, as before.
++ */
++#define NETLINK_VENDOR_MIN 23
++
+ /* do_socket() Must return target values and target errnos. */
+ static abi_long do_socket(int domain, int type, int protocol)
+ {
+@@ -3186,7 +3197,8 @@
+          protocol == NETLINK_ROUTE ||
+ #endif
+          protocol == NETLINK_KOBJECT_UEVENT ||
+-         protocol == NETLINK_AUDIT)) {
++         protocol == NETLINK_AUDIT ||
++         protocol >= NETLINK_VENDOR_MIN)) {
+         return -TARGET_EPROTONOSUPPORT;
+     }
+ 
+@@ -3217,7 +3229,9 @@
+                 fd_trans_register(ret, &target_netlink_audit_trans);
+                 break;
+             default:
+-                g_assert_not_reached();
++                /* a vendor family (above): its messages pass unchanged */
++                g_assert(protocol >= NETLINK_VENDOR_MIN);
++                break;
+             }
+         }
+     }
