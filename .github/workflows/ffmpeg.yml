@@ -14,6 +14,8 @@ on:
       - "**"
     tags:
       - "ffmpeg-*"
+      # ffmpeg-helper's own (.github/workflows/ffmpeg-helper.yml)
+      - "!ffmpeg-helper-*"
     # path filters are not evaluated for tags
     paths:
       - "ffmpeg/**"
