@@ -17,7 +17,7 @@ not install on trixie, and trixie-backports has none.
 ## What is built
 
 - aml 1.0.0, upstream's tag tarball, unchanged.
-- neatvnc 1.0.4, upstream's tag tarball, with the two patches below. 1.0.4 rather than Debian's
+- neatvnc 1.0.4, upstream's tag tarball, with the three patches below. 1.0.4 rather than Debian's
   1.0.1: it has upstream's "Use poll() instead of map to wait" for the V4L2 encoder and later
   fixes (WebSocket header bounds checks, the client's bits per pixel validated, the stream
   ordering fixes of 1.0.2 and 1.0.3).
@@ -36,7 +36,7 @@ The prefix is `/usr/lib/beanjar/neatvnc`, out of the way of Debian's `libneatvnc
 
 ### Patches
 
-Both change `src/enc/h264/v4l2m2m-impl.c` and are not upstream (checked against 1.0.4 and master,
+The first two change `src/enc/h264/v4l2m2m-impl.c` and are not upstream (checked against 1.0.4 and master,
 2026-11-09). beanjar-vnc hands neatvnc its frames as GBM buffers on hosts that have one, so a
 client that asks for Open H.264 (noVNC first of all) gets the board's V4L2 hardware encoder, and
 two of neatvnc's behaviours there contradict the V4L2 specification.
@@ -51,6 +51,16 @@ two of neatvnc's behaviours there contradict the V4L2 specification.
   V4L2 value 67): noVNC's default level 3 (QP 34, value 35) leaves faint vertical streaks in flat
   H.264 areas, and the level also sets Tight's JPEG quality, which a viewer should keep low, so
   the floor is in the H.264 encoder only. Levels 6 to 9 are unchanged.
+
+`03-vmware-alpha-cursor.patch` changes the cursor's encoding (`src/cursor.c`, `src/server.c`)
+and is not upstream either (checked against 1.0.4 and master, 2026-11-26). neatvnc sends a cursor
+only with the Cursor pseudo-encoding, whose one-bit mask drops a cursor's translucent pixels: LG's
+newer pointers are a white outline around a translucent fill and a soft shadow, of which only the
+outline is left. The patch adds VMware's cursor pseudo-encoding (`0x574d5664`) with cursor type 1,
+each pixel's R, G, B and straight alpha bytes, for the clients that ask for it (noVNC asks for it
+before Cursor; TigerVNC reads it too); other clients get the Cursor pseudo-encoding as before.
+`neatvnc.h` defines `NVNC_HAS_VMWARE_ALPHA_CURSOR`, so a program can tell this build from
+others. The test server gets a 2x1 cursor and the handshake tests check both encodings of it.
 
 ### Compared with Debian's packaging
 

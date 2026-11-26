@@ -1,0 +1,249 @@
+Description: VMware's alpha cursor pseudo-encoding
+ The Cursor pseudo-encoding (-239) has a one-bit mask, so a cursor's
+ translucent pixels (a soft shadow, a translucent fill) are either dropped or
+ made opaque. VMware's cursor pseudo-encoding (0x574d5664) with cursor type 1
+ carries each pixel's R, G, B and straight alpha bytes. noVNC asks for it
+ before Cursor and decodes it in _handleVMwareCursor; TigerVNC's viewer reads
+ it too. A client that asks for it gets the cursor that way, any other the
+ Cursor pseudo-encoding as before. The test server gets a 2x1 cursor, and the
+ handshake tests check both encodings of it. neatvnc.h defines
+ NVNC_HAS_VMWARE_ALPHA_CURSOR for programs to tell this build from others.
+Author: Mariotaku <git@mariotaku.me>
+Forwarded: no
+Last-Update: 2026-11-26
+---
+--- a/include/cursor.h
++++ b/include/cursor.h
+@@ -24,3 +24,5 @@ struct rfb_pixel_format;
+ 
+ int cursor_encode(struct vec* dst, struct rfb_pixel_format* pixfmt,
+ 		struct nvnc_frame* image, uint32_t x_hotspot, uint32_t y_hotspot);
++int cursor_encode_vmware_alpha(struct vec* dst, struct nvnc_frame* image,
++		uint32_t x_hotspot, uint32_t y_hotspot);
+--- a/include/neatvnc.h
++++ b/include/neatvnc.h
+@@ -787,7 +787,12 @@ void nvnc_send_cut_text(struct nvnc*, const char* text, uint32_t len);
+  * If is_damaged is not set, the submitted cursor frame will replace the old
+  * cursor frame, but it will not be sent to already connected clients. The
+  * purpose of this is to allow for proper rotation of buffer pools.
++ *
++ * A client that takes VMware's cursor pseudo-encoding gets it with each
++ * pixel's alpha; one that takes only the Cursor pseudo-encoding, with a
++ * one-bit mask.
+  */
++#define NVNC_HAS_VMWARE_ALPHA_CURSOR 1
+ void nvnc_set_cursor(struct nvnc*, struct nvnc_frame*, uint16_t hotspot_x,
+ 		uint16_t hotspot_y, bool is_damaged);
+ 
+--- a/include/rfb-proto.h
++++ b/include/rfb-proto.h
+@@ -79,6 +79,7 @@ enum rfb_encodings {
+ 	RFB_ENCODING_EXT_MOUSE_BUTTONS = -316,
+ 	RFB_ENCODING_PTS = -1000,
+ 	RFB_ENCODING_NTP = -1001,
++	RFB_ENCODING_VMWARE_CURSOR = 0x574d5664,
+ 	RFB_ENCODING_VMWARE_LED_STATE = 0x574d5668,
+ 	// 0xc0a1e5ce, greater than INT_MAX
+ 	RFB_ENCODING_EXTENDED_CLIPBOARD = -1063131698,
+--- a/src/cursor.c
++++ b/src/cursor.c
+@@ -27,6 +27,8 @@
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include <assert.h>
++#include <string.h>
++#include <libdrm/drm_fourcc.h>
+ 
+ #define UDIV_UP(a, b) (((a) + (b) - 1) / (b))
+ 
+@@ -95,3 +97,58 @@ failure:
+ 	nvnc_frame_unref(fb);
+ 	return rc;
+ }
++
++/*
++ * VMware's cursor pseudo-encoding (0x574d5664) with cursor type 1, alpha: a
++ * byte of type, a byte of padding, then width * height pixels of four bytes
++ * each, R, G, B and straight alpha, whatever the client's pixel format. Unlike
++ * the Cursor pseudo-encoding's one-bit mask it keeps translucent pixels.
++ */
++int cursor_encode_vmware_alpha(struct vec* dst, struct nvnc_frame* image,
++		uint32_t hotspot_x, uint32_t hotspot_y)
++{
++	static const uint8_t type_alpha[2] = { 1, 0 };
++	int rc = -1;
++
++	// Empty cursor
++	if (!image) {
++		rc = nvnc__encode_rect_head(dst, RFB_ENCODING_VMWARE_CURSOR, 0,
++				0, 0, 0);
++		return rc < 0 ? rc : vec_append(dst, type_alpha,
++				sizeof(type_alpha));
++	}
++
++	if (nvnc_frame_map(image) < 0)
++		return -1;
++
++	struct nvnc_composite_fb cfb = {
++		.n_fbs = 1,
++		.fbs = { image },
++	};
++
++	uint32_t width = nvnc_composite_fb_width(&cfb);
++	uint32_t height = nvnc_composite_fb_height(&cfb);
++
++	// ABGR8888 is R, G, B, A in memory: the bytes on the wire
++	struct nvnc_frame* fb = nvnc_frame_new(width, height,
++			DRM_FORMAT_ABGR8888, width);
++	if (!fb)
++		return -1;
++
++	composite_buffer_now(fb, &cfb, NULL);
++
++	rc = nvnc__encode_rect_head(dst, RFB_ENCODING_VMWARE_CURSOR, hotspot_x,
++			hotspot_y, width, height);
++	if (rc < 0)
++		goto failure;
++
++	rc = vec_append(dst, type_alpha, sizeof(type_alpha));
++	if (rc < 0)
++		goto failure;
++
++	rc = vec_append(dst, fb->buffer->addr, (size_t)width * height * 4);
++
++failure:
++	nvnc_frame_unref(fb);
++	return rc < 0 ? -1 : 0;
++}
+--- a/src/server.c
++++ b/src/server.c
+@@ -860,6 +860,7 @@ static int on_client_set_encodings(struct nvnc_client* client)
+ 		case RFB_ENCODING_ZRLE:
+ 		case RFB_ENCODING_OPEN_H264:
+ 		case RFB_ENCODING_CURSOR:
++		case RFB_ENCODING_VMWARE_CURSOR:
+ 		case RFB_ENCODING_DESKTOPSIZE:
+ 		case RFB_ENCODING_DESKTOPNAME:
+ 		case RFB_ENCODING_EXTENDEDDESKTOPSIZE:
+@@ -926,7 +927,11 @@ static void send_cursor_update(struct nvnc_client* client)
+ 
+ 	vec_append(&payload, &head, sizeof(head));
+ 
+-	int rc = cursor_encode(&payload, &client->pixfmt, server->cursor.buffer,
++	// The alpha cursor where the client takes it, else the one-bit mask
++	int rc = client_has_encoding(client, RFB_ENCODING_VMWARE_CURSOR) ?
++		cursor_encode_vmware_alpha(&payload, server->cursor.buffer,
++			server->cursor.hotspot_x, server->cursor.hotspot_y) :
++		cursor_encode(&payload, &client->pixfmt, server->cursor.buffer,
+ 			server->cursor.hotspot_x, server->cursor.hotspot_y);
+ 	if (rc < 0) {
+ 		nvnc_log(NVNC_LOG_ERROR, "Failed to send cursor to client");
+@@ -995,6 +1000,7 @@ static const char* encoding_to_string(enum rfb_encodings encoding)
+ 	case RFB_ENCODING_ZRLE: return "zrle";
+ 	case RFB_ENCODING_OPEN_H264: return "open-h264";
+ 	case RFB_ENCODING_CURSOR: return "cursor";
++	case RFB_ENCODING_VMWARE_CURSOR: return "vmware-cursor";
+ 	case RFB_ENCODING_DESKTOPSIZE: return "desktop-size";
+ 	case RFB_ENCODING_DESKTOPNAME: return "desktop-name";
+ 	case RFB_ENCODING_EXTENDEDDESKTOPSIZE: return "extended-desktop-size";
+@@ -1173,7 +1179,7 @@ static void process_fb_update_requests(struct nvnc_client* client)
+ 	}
+ 
+ 	if (server->cursor_seq != client->cursor_seq
+-			&& client_has_encoding(client, RFB_ENCODING_CURSOR)) {
++			&& nvnc_client_supports_cursor(client)) {
+ 		send_cursor_update(client);
+ 
+ 		if (decrement_pending_requests(client) <= 0)
+@@ -3211,7 +3217,8 @@ EXPORT
+ bool nvnc_client_supports_cursor(const struct nvnc_client* client)
+ {
+ 	for (size_t i = 0; i < client->n_encodings; ++i) {
+-		if (client->encodings[i] == RFB_ENCODING_CURSOR)
++		if (client->encodings[i] == RFB_ENCODING_CURSOR ||
++				client->encodings[i] == RFB_ENCODING_VMWARE_CURSOR)
+ 			return true;
+ 	}
+ 	return false;
+--- a/test/rfb-test-server.c
++++ b/test/rfb-test-server.c
+@@ -182,6 +182,14 @@ int main(int argc, char* argv[])
+ 	assert(fb);
+ 	nvnc_display_feed_frame(display, fb);
+ 
++	/* A 2x1 cursor, hotspot 1,0: opaque red, then green at alpha 64 */
++	struct nvnc_frame* cursor = nvnc_frame_new(2, 1, DRM_FORMAT_ABGR8888, 2);
++	assert(cursor);
++	static const uint8_t cursor_pixels[] = { 255, 0, 0, 255, 0, 255, 0, 64 };
++	memcpy(nvnc_frame_get_addr(cursor), cursor_pixels, sizeof(cursor_pixels));
++	nvnc_set_cursor(server, cursor, 1, 0, true);
++	nvnc_frame_unref(cursor);
++
+ 	/* SIGTERM handler for clean shutdown */
+ 	struct aml_signal* sig = aml_signal_new(SIGTERM, on_sigterm,
+ 			NULL, NULL);
+--- a/test/test_rfb_handshake.py
++++ b/test/test_rfb_handshake.py
+@@ -428,6 +428,62 @@ class TestAuthBypass(unittest.TestCase):
+             self.assertEqual(struct.unpack('!I', data)[0], 1)
+ 
+ 
++
++ENCODING_CURSOR = -239
++ENCODING_VMWARE_CURSOR = 0x574d5664
++
++
++class TestCursor(unittest.TestCase):
++    """The server's 2x1 cursor (hotspot 1,0; opaque red, then green at
++    alpha 64), as the Cursor and VMware cursor pseudo-encodings send it."""
++
++    server = None
++
++    @classmethod
++    def setUpClass(cls):
++        cls.server = ServerProcess('none')
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.server.stop()
++
++    def first_rect(self, encodings):
++        """Connect, ask for ENCODINGS and an update; the first rectangle's
++        header (x, y, w, h, encoding) and the connection."""
++        c = RFBConnection(self.server.port, 'RFB 003.008\n')
++        c.read_security_type_list()
++        c.choose_security_type(1)
++        self.assertEqual(c.read_security_result(), 0)
++        c.sock.sendall(b'\x01')  # ClientInit, shared
++        init = c.recv_exact(24)
++        c.recv_exact(struct.unpack('!I', init[20:24])[0])  # the name
++        c.sock.sendall(struct.pack('!BxH', 2, len(encodings)) +
++                       b''.join(struct.pack('!i', e) for e in encodings))
++        c.sock.sendall(struct.pack('!BBHHHH', 3, 0, 0, 0, 64, 64))
++        msg_type, n_rects = struct.unpack('!BxH', c.recv_exact(4))
++        self.assertEqual(msg_type, 0)
++        self.assertGreaterEqual(n_rects, 1)
++        return struct.unpack('!HHHHi', c.recv_exact(12)), c, init
++
++    def test_vmware_alpha_cursor(self):
++        """VMware's cursor, type 1: R, G, B and straight alpha bytes."""
++        head, c, _ = self.first_rect([0, ENCODING_VMWARE_CURSOR,
++                                      ENCODING_CURSOR])
++        with c:
++            self.assertEqual(head, (1, 0, 2, 1, ENCODING_VMWARE_CURSOR))
++            self.assertEqual(c.recv_exact(2), b'\x01\x00')
++            self.assertEqual(c.recv_exact(8),
++                             bytes([255, 0, 0, 255, 0, 255, 0, 64]))
++
++    def test_cursor_bit_mask(self):
++        """Without VMware's: the Cursor pseudo-encoding, alpha 64 masked."""
++        head, c, init = self.first_rect([0, ENCODING_CURSOR])
++        with c:
++            self.assertEqual(head, (1, 0, 2, 1, ENCODING_CURSOR))
++            c.recv_exact(2 * init[4] // 8)  # the pixels
++            self.assertEqual(c.recv_exact(1), b'\x80')
++
++
+ if __name__ == '__main__':
+     if len(sys.argv) < 2:
+         print(f'Usage: {sys.argv[0]} <path-to-rfb-test-server>', file=sys.stderr)
