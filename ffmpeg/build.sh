@@ -10,10 +10,9 @@
 #   ffmpeg/build.sh [OUT]     default OUT: build/ffmpeg in the repository
 #
 # VERSION holds the version: the FFmpeg release Debian 13 ships, plus a Beanjar revision
-# (7.1.5+beanjar2). Its upstream part names the release tarball, downloaded from ffmpeg.org. The
-# V4L2 request series is the V4L2REQ_COUNT commits of Jonas Karlman's branch up to V4L2REQ_COMMIT,
-# exported with git format-patch; Beanjar's own patches in patches/ follow it. The tarball and
-# every patch are checked against ffmpeg.sha256.
+# (7.1.5+beanjar2). Its upstream part names the release tarball; sources.sh downloads it, applies
+# the V4L2 request series and Beanjar's own patches in patches/, and checks them all against
+# ffmpeg.sha256.
 # FFmpeg is configured with those of Debian's external libraries and hardware interfaces that
 # encode or decode audio and video; FATE, FFmpeg's test suite, runs without external samples as
 # in Debian's build. The result is OUT/ffmpeg-<version>-<arch>.tar.xz, whose root is the prefix:
@@ -39,11 +38,6 @@ OUT=${1:-$TOP/../build/ffmpeg}
 OUT=$(mkdir -p "$OUT" && cd "$OUT" && pwd)
 export DEBIAN_FRONTEND=noninteractive
 PREFIX=/usr/lib/beanjar/ffmpeg
-V4L2REQ_URL=https://github.com/Kwiboo/FFmpeg.git
-V4L2REQ_BRANCH=v4l2-request-n7.1.3
-V4L2REQ_COMMIT=fad85d9c76611c09b561167ab405c667a0dcdeb7
-V4L2REQ_BASE=f46e514491172d15bd74b4abb1814cd2f05a763e # tag n7.1.3
-V4L2REQ_COUNT=14
 LIBS="avcodec avdevice avfilter avformat avutil postproc swresample swscale"
 
 die() { echo "build.sh: $*" >&2; exit 1; }
@@ -74,60 +68,11 @@ apt-get install -y --no-install-recommends \
 	libdrm-dev libudev-dev libva-dev libvdpau-dev libvulkan-dev libffmpeg-nvenc-dev $vpl
 
 step "sources"
-DL=$OUT/download
-mkdir -p "$DL"
-f=ffmpeg-$upstream.tar.xz
-f_sha=$(grep "  $f\$" "$TOP/ffmpeg.sha256" | cut -d' ' -f1)
-[ -n "$f_sha" ] || die "ffmpeg.sha256 has no checksum for $f"
-if ! echo "$f_sha  $DL/$f" | sha256sum -c --status 2>/dev/null; then
-	curl -fL --retry 3 -o "$DL/$f.part" "https://ffmpeg.org/releases/$f"
-	mv "$DL/$f.part" "$DL/$f"
-	echo "$f_sha  $DL/$f" | sha256sum -c
-fi
-git=$DL/v4l2-request.git
-g() { git -c safe.directory="$git" -C "$git" "$@"; }
-[ -d "$git" ] || git init -q --bare "$git"
-g fetch -q --depth=$((V4L2REQ_COUNT + 1)) "$V4L2REQ_URL" "$V4L2REQ_COMMIT"
-base=$(g rev-parse "$V4L2REQ_COMMIT~$V4L2REQ_COUNT")
-[ "$base" = "$V4L2REQ_BASE" ] || die "$V4L2REQ_COMMIT~$V4L2REQ_COUNT is $base, not $V4L2REQ_BASE"
-PATCHES=$OUT/patches
-rm -rf "$PATCHES"
-# --full-index and --zero-commit keep the output independent of the clone, so it can be hashed
-g format-patch -q --full-index --no-signature --zero-commit -o "$PATCHES" \
-	"$V4L2REQ_BASE..$V4L2REQ_COMMIT"
-grep -v -e "  $f\$" -e '  patches/' "$TOP/ffmpeg.sha256" > "$OUT/patches.sha256"
-if ! (cd "$PATCHES" && sha256sum -- *.patch) | cmp -s - "$OUT/patches.sha256"; then
-	echo "build.sh: the exported patches differ from ffmpeg.sha256:" >&2
-	(cd "$PATCHES" && sha256sum -- *.patch) | diff "$OUT/patches.sha256" - >&2 || :
-	exit 1
-fi
-rm "$OUT/patches.sha256"
-# Beanjar's own patches, in patches/: each listed in ffmpeg.sha256, and nothing else there
-grep '  patches/' "$TOP/ffmpeg.sha256" > "$OUT/local.sha256"
-if ! (cd "$TOP" && sha256sum -- patches/*.patch) | cmp -s - "$OUT/local.sha256"; then
-	echo "build.sh: the patches in patches/ differ from ffmpeg.sha256:" >&2
-	(cd "$TOP" && sha256sum -- patches/*.patch) | diff "$OUT/local.sha256" - >&2 || :
-	exit 1
-fi
-rm "$OUT/local.sha256"
-SRC=$OUT/src
-rm -rf "$SRC" "$PREFIX"
-mkdir -p "$SRC"
-tar -C "$SRC" -xJf "$DL/$f"
-S=$SRC/ffmpeg-$upstream
-for p in "$PATCHES"/*.patch; do
-	echo "applying $(basename "$p")"
-	patch -d "$S" -p1 --batch --forward --quiet --fuzz=0 < "$p"
-done
-for p in "$TOP"/patches/*.patch; do
-	echo "applying patches/$(basename "$p")"
-	patch -d "$S" -p1 --batch --forward --quiet --fuzz=0 < "$p"
-done
-# file dates clamped to the release tarball's, so equal sources give equal tarballs
-SOURCE_DATE_EPOCH=$(stat -c %Y "$S/VERSION")
-export SOURCE_DATE_EPOCH
-tar -C "$SRC" --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$SOURCE_DATE_EPOCH" \
-	--clamp-mtime -cJf "$OUT/ffmpeg-$version-source.tar.xz" "ffmpeg-$upstream"
+FF=$TOP
+SOURCE_TARBALL=$OUT/ffmpeg-$version-source.tar.xz
+rm -rf "$PREFIX"
+# shellcheck source=ffmpeg/sources.sh
+. "$TOP/sources.sh"
 
 step "configure"
 # Derived from Debian 13's configure line (debian/rules in its ffmpeg source package). Kept: the
@@ -200,12 +145,12 @@ install -m 0644 "$TOP/NOTICE" "$PREFIX/share/doc/ffmpeg/NOTICE"
 # The .pc files find the tree from their own place, so they need no --define-prefix (which would
 # redefine the prefix of every other .pc file too, Debian's included) and no sysroot. configure
 # writes libdir and includedir out in full.
-for f in "$PREFIX"/lib/pkgconfig/*.pc; do
-	grep -qx "prefix=$PREFIX" "$f" || die "$f: prefix is not $PREFIX"
+for pc in "$PREFIX"/lib/pkgconfig/*.pc; do
+	grep -qx "prefix=$PREFIX" "$pc" || die "$pc: prefix is not $PREFIX"
 	# shellcheck disable=SC2016 # ${pcfiledir} and ${prefix} are pkg-config's
 	sed -i -e 's|^prefix=.*|prefix=${pcfiledir}/../..|' \
 		-e "s|^libdir=$PREFIX/lib\$|libdir=\${prefix}/lib|" \
-		-e "s|^includedir=$PREFIX/include\$|includedir=\${prefix}/include|" "$f"
+		-e "s|^includedir=$PREFIX/include\$|includedir=\${prefix}/include|" "$pc"
 done
 if grep -h -v '^prefix=' "$PREFIX"/lib/pkgconfig/*.pc | grep -F "$PREFIX"; then
 	die "the .pc lines above name $PREFIX instead of \${prefix}"

@@ -1,0 +1,13 @@
+FFmpeg for Beanjar's media helper, as built by beanjar-vendor (ffmpeg-helper/)
+
+These libraries are FFmpeg's release named in BUILDINFO, with the V4L2 Request API patches by
+Jonas Karlman (https://github.com/Kwiboo/FFmpeg) and Beanjar's own patches applied, configured
+with only the decoders, parsers and hardware decoders BUILDINFO lists. FFmpeg, and the patches,
+are licensed under the GNU Lesser General Public License, version 2.1 or later
+(COPYING.LGPLv2.1). This build is not configured with --enable-gpl and links no GPL-licensed
+library, so the libraries as built here are LGPL-2.1-or-later. LICENSE.md is FFmpeg's own
+summary of its licensing.
+
+The corresponding source is ffmpeg-helper-<version>-source.tar.xz, published with each release
+of these libraries, and the build scripts in beanjar-vendor's ffmpeg-helper/ and ffmpeg/
+directories.

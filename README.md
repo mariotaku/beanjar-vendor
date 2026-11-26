@@ -25,6 +25,7 @@ GitHub release named after the tag.
 | [`qemu-user/`](qemu-user/README.md) | `qemu-user-<version>-<arch>.tar.xz`: QEMU 10.0.2's `qemu-arm`, static, with the compat bridge that hands a 32-bit ARM userland's system calls to the guest kernel; it runs inside the guest: arm64 for Beanjar's arm64 guest kernel on every host, amd64 (with `qemu-aarch64`) for the experimental x86-64 guest kernel | `.github/workflows/qemu-user.yml` |
 | [`neatvnc/`](neatvnc/README.md) | `neatvnc-<version>-<arch>.tar.xz`: neatvnc 1.0.4 with V4L2 H.264 fixes, and aml 1.0, for `beanjar-vnc` | `.github/workflows/neatvnc.yml` |
 | [`ffmpeg/`](ffmpeg/README.md) | `ffmpeg-<version>-<arch>.tar.xz`: FFmpeg 7.1.5 with the V4L2 Request API hwaccels, under `/usr/lib/beanjar/ffmpeg` | `.github/workflows/ffmpeg.yml` |
+| [`ffmpeg-helper/`](ffmpeg-helper/README.md) | `ffmpeg-helper-<version>-<arch>.tar.xz`: the same FFmpeg with only the decoders, parsers and hardware decoding (VA-API, Vulkan, NVDEC, V4L2 request) of Beanjar's media helper, under `/usr/lib/beanjar/ffmpeg-helper` | `.github/workflows/ffmpeg-helper.yml` |
 | [`angle/`](angle/README.md) | `angle-<version>-macos-<arch>.tar.xz`: ANGLE's `libEGL` and `libGLESv2` with the Metal backend, macOS only | `.github/workflows/macos.yml` |
 | [`virglrenderer/`](virglrenderer/README.md) | `virglrenderer-<version>-macos-<arch>.tar.xz`: virglrenderer from `main` with OpenGL ES host fixes, and libepoxy with EGL, macOS only | `.github/workflows/macos.yml` |
 | [`qemu/`](qemu/README.md) | `qemu-<version>-macos-<arch>.tar.xz`: the same QEMU for macOS | `.github/workflows/macos.yml` |
@@ -34,8 +35,8 @@ GitHub release named after the tag.
 The patches and build scripts are GPL-2.0-or-later (`LICENSE`), except neatvnc's patches, which
 are ISC like neatvnc, and the virglrenderer and libepoxy patches, which are MIT like those; every
 file carries an SPDX header or is covered by `REUSE.toml`. Each program keeps its own upstream
-licence. The releases of the GPL-licensed programs, QEMU and FFmpeg, also
-carry their source: the upstream QEMU tarball, and FFmpeg's patched source.
+licence. The releases of the GPL- and LGPL-licensed programs, QEMU and the two FFmpeg builds,
+also carry their source: the upstream QEMU tarball, and FFmpeg's patched source.
 
 ## macOS
 

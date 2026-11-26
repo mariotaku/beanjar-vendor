@@ -30,6 +30,10 @@ release without source patches; its `orig.tar.xz` is byte-identical to ffmpeg.or
 upstream part selects the tarball, which `build.sh` downloads from `ffmpeg.org` and checks against
 `ffmpeg.sha256`.
 
+`sources.sh` prepares the patched source: the tarball, the patches below, and their checks. The
+build script runs it, and so does that of [`ffmpeg-helper/`](../ffmpeg-helper/README.md), the
+media helper's minimal build of the same source.
+
 ## Patches
 
 The 14 commits of [`Kwiboo/FFmpeg`](https://github.com/Kwiboo/FFmpeg) branch
