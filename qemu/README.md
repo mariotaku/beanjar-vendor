@@ -29,6 +29,10 @@ Taken from Beanjar's `host/tools/build/qemu/patches/`, as of commit
   scanouts are read back into shared memory and sent to D-Bus listeners that way.
 - `0004` ui/dbus: a listener whose D-Bus connection closed is dropped, instead of being sent
   every frame for as long as QEMU runs.
+- `0005` contrib/vhost-user-gpu: the backend takes the new display socket that QEMU hands it when
+  a stopped VM runs again (QMP `stop` and `cont`), instead of refusing it, and drops the wait for an
+  answer on the old one; unpatched, the display froze at the first `cont`, the control queue
+  stalled, and the second `cont` aborted the backend.
 
 ## What is built
 

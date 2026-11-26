@@ -1,0 +1,189 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mariotaku <git@mariotaku.me>
+Date: Thu, 26 Nov 2026 20:25:36 +0900
+Subject: [PATCH 5/5] contrib/vhost-user-gpu: take a new display socket after a VM
+ stop
+
+When the VM stops, the frontend closes its end of the display socket
+(vhost_user_gpu_set_status() deinits the chardev), and when it runs
+again it hands a new one with VHOST_USER_GPU_SET_SOCKET. The backend
+refused that socket while it still held the old one, which it notices
+only when a write fails; nothing reached the display again. A write
+failure then closed the socket, and the next wait for an answer was a
+GSource on fd -1 that never fires: the control queue stalled, the
+guest's driver waited for its commands for ever, and the next
+SET_SOCKET, now accepted, aborted in set_gpu_protocol_features() on
+'wait_in == 0'.
+
+Let SET_SOCKET replace the old socket. Dropping a socket also drops
+the wait on it: a flush's DMABUF_UPDATE counts as answered, and a
+GET_DISPLAY_INFO or GET_EDID is asked again on the new socket. A short
+read is the frontend closing its end, so a wait sees that instead of
+reading garbage; a failed write keeps the socket for the wait or the
+next SET_SOCKET to settle, and does not raise SIGPIPE. Commands wait
+in the ring while there is no socket or the queue is stopped (the
+frontend sets the queue's base again before it starts it), and the
+queue is served once when it starts.
+---
+diff --git a/contrib/vhost-user-gpu/vhost-user-gpu.c b/contrib/vhost-user-gpu/vhost-user-gpu.c
+index bb41758..ddac411 100644
+--- a/contrib/vhost-user-gpu/vhost-user-gpu.c
++++ b/contrib/vhost-user-gpu/vhost-user-gpu.c
+@@ -107,9 +107,27 @@ vg_sock_fd_read(int sock, void *buf, ssize_t buflen)
+     return ret;
+ }
+ 
++/*
++ * Drop the display socket. QEMU closes its end when the VM stops and hands
++ * a new one with VHOST_USER_GPU_SET_SOCKET when it runs again, so this
++ * also forgets the answer we were waiting for on it. A command asked on it
++ * (GET_DISPLAY_INFO, GET_EDID) is asked again on the next socket; a
++ * flush's DMABUF_UPDATE counts as done.
++ */
+ static void
+ vg_sock_fd_close(VuGpu *g)
+ {
++    if (g->wait_in) {
++        struct virtio_gpu_ctrl_command *cmd = QTAILQ_LAST(&g->fenceq);
++
++        g_source_remove(g->wait_in);
++        g->wait_in = 0;
++        if (cmd && cmd->state == VG_CMD_STATE_PENDING) {
++            QTAILQ_REMOVE(&g->fenceq, cmd, next);
++            g->inflight--;
++            g->replay = cmd;
++        }
++    }
+     if (g->sock_fd >= 0) {
+         close(g->sock_fd);
+         g->sock_fd = -1;
+@@ -171,20 +189,21 @@ vg_sock_fd_write(int sock, const void *buf, ssize_t buflen, int fd)
+     }
+ 
+     do {
+-        ret = sendmsg(sock, &msg, 0);
++        ret = sendmsg(sock, &msg, MSG_NOSIGNAL);
+     } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+ 
+     g_warn_if_fail(ret == buflen);
+     return ret;
+ }
+ 
++/*
++ * A failed write keeps the socket: the frontend closed its end, and the
++ * wait for an answer sees that, or VHOST_USER_GPU_SET_SOCKET replaces it.
++ */
+ void
+ vg_send_msg(VuGpu *vg, const VhostUserGpuMsg *msg, int fd)
+ {
+-    if (vg_sock_fd_write(vg->sock_fd, msg,
+-                         VHOST_USER_GPU_HDR_SIZE + msg->size, fd) < 0) {
+-        vg_sock_fd_close(vg);
+-    }
++    vg_sock_fd_write(vg->sock_fd, msg, VHOST_USER_GPU_HDR_SIZE + msg->size, fd);
+ }
+ 
+ bool
+@@ -193,9 +212,10 @@ vg_recv_msg(VuGpu *g, uint32_t expect_req, uint32_t expect_size,
+ {
+     uint32_t req, flags, size;
+ 
+-    if (vg_sock_fd_read(g->sock_fd, &req, sizeof(req)) < 0 ||
+-        vg_sock_fd_read(g->sock_fd, &flags, sizeof(flags)) < 0 ||
+-        vg_sock_fd_read(g->sock_fd, &size, sizeof(size)) < 0) {
++    /* a short read is the frontend closing the socket */
++    if (vg_sock_fd_read(g->sock_fd, &req, sizeof(req)) != sizeof(req) ||
++        vg_sock_fd_read(g->sock_fd, &flags, sizeof(flags)) != sizeof(flags) ||
++        vg_sock_fd_read(g->sock_fd, &size, sizeof(size)) != sizeof(size)) {
+         goto err;
+     }
+ 
+@@ -907,26 +927,38 @@ vg_handle_ctrl(VuDev *dev, int qidx)
+     size_t len;
+ 
+     for (;;) {
+-        if (vg->wait_in != 0) {
++        /*
++         * Not without a display socket, nor while the queue is stopped: the
++         * frontend sets the queue's base again before it starts it.
++         */
++        if (vg->wait_in != 0 || vg->sock_fd == -1 ||
++            !vu_queue_started(dev, vq)) {
+             return;
+         }
+ 
+-        cmd = vu_queue_pop(dev, vq, sizeof(struct virtio_gpu_ctrl_command));
+-        if (!cmd) {
+-            break;
+-        }
+-        cmd->vq = vq;
+-        cmd->error = 0;
+-        cmd->state = VG_CMD_STATE_NEW;
+-
+-        len = iov_to_buf(cmd->elem.out_sg, cmd->elem.out_num,
+-                         0, &cmd->cmd_hdr, sizeof(cmd->cmd_hdr));
+-        if (len != sizeof(cmd->cmd_hdr)) {
+-            g_warning("%s: command size incorrect %zu vs %zu\n",
+-                      __func__, len, sizeof(cmd->cmd_hdr));
+-        }
++        if (vg->replay) {
++            cmd = vg->replay;
++            vg->replay = NULL;
++            cmd->state = VG_CMD_STATE_NEW;
++        } else {
++            cmd = vu_queue_pop(dev, vq,
++                               sizeof(struct virtio_gpu_ctrl_command));
++            if (!cmd) {
++                break;
++            }
++            cmd->vq = vq;
++            cmd->error = 0;
++            cmd->state = VG_CMD_STATE_NEW;
++
++            len = iov_to_buf(cmd->elem.out_sg, cmd->elem.out_num,
++                             0, &cmd->cmd_hdr, sizeof(cmd->cmd_hdr));
++            if (len != sizeof(cmd->cmd_hdr)) {
++                g_warning("%s: command size incorrect %zu vs %zu\n",
++                          __func__, len, sizeof(cmd->cmd_hdr));
++            }
+ 
+-        virtio_gpu_ctrl_hdr_bswap(&cmd->cmd_hdr);
++            virtio_gpu_ctrl_hdr_bswap(&cmd->cmd_hdr);
++        }
+         g_debug("%d %s\n", cmd->cmd_hdr.type,
+                 vg_cmd_to_string(cmd->cmd_hdr.type));
+ 
+@@ -1058,6 +1090,10 @@ vg_queue_set_started(VuDev *dev, int qidx, bool started)
+     switch (qidx) {
+     case 0:
+         vu_set_queue_handler(dev, vq, started ? vg_handle_ctrl : NULL);
++        if (started) {
++            /* what came while it was stopped, and a command to ask again */
++            vg_handle_ctrl(dev, qidx);
++        }
+         break;
+     case 1:
+         vu_set_queue_handler(dev, vq, started ? vg_handle_cursor : NULL);
+@@ -1127,7 +1163,8 @@ vg_process_msg(VuDev *dev, VhostUserMsg *msg, int *do_reply)
+     switch (msg->request) {
+     case VHOST_USER_GPU_SET_SOCKET: {
+         g_return_val_if_fail(msg->fd_num == 1, 1);
+-        g_return_val_if_fail(g->sock_fd == -1, 1);
++        /* a new socket after a VM stop replaces the old one */
++        vg_sock_fd_close(g);
+         g->sock_fd = msg->fds[0];
+         set_gpu_protocol_features(g);
+         return 1;
+diff --git a/contrib/vhost-user-gpu/vugpu.h b/contrib/vhost-user-gpu/vugpu.h
+index 654c392..eef5d34 100644
+--- a/contrib/vhost-user-gpu/vugpu.h
++++ b/contrib/vhost-user-gpu/vugpu.h
+@@ -142,6 +142,8 @@ typedef struct VuGpu {
+     bool edid_inited;
+     bool use_modifiers;
+     uint32_t inflight;
++    /* a GET_DISPLAY_INFO or GET_EDID whose answer was lost with its socket */
++    struct virtio_gpu_ctrl_command *replay;
+ 
+     struct virtio_gpu_scanout scanout[VIRTIO_GPU_MAX_SCANOUTS];
+     QTAILQ_HEAD(, virtio_gpu_simple_resource) reslist;
