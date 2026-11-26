@@ -10,9 +10,10 @@
 #   ffmpeg/build.sh [OUT]     default OUT: build/ffmpeg in the repository
 #
 # VERSION holds the version: the FFmpeg release Debian 13 ships, plus a Beanjar revision
-# (7.1.5+beanjar1). Its upstream part names the release tarball, downloaded from ffmpeg.org. The
+# (7.1.5+beanjar2). Its upstream part names the release tarball, downloaded from ffmpeg.org. The
 # V4L2 request series is the V4L2REQ_COUNT commits of Jonas Karlman's branch up to V4L2REQ_COMMIT,
-# exported with git format-patch. The tarball and every patch are checked against ffmpeg.sha256.
+# exported with git format-patch; Beanjar's own patches in patches/ follow it. The tarball and
+# every patch are checked against ffmpeg.sha256.
 # FFmpeg is configured with those of Debian's external libraries and hardware interfaces that
 # encode or decode audio and video; FATE, FFmpeg's test suite, runs without external samples as
 # in Debian's build. The result is OUT/ffmpeg-<version>-<arch>.tar.xz, whose root is the prefix:
@@ -94,13 +95,21 @@ rm -rf "$PATCHES"
 # --full-index and --zero-commit keep the output independent of the clone, so it can be hashed
 g format-patch -q --full-index --no-signature --zero-commit -o "$PATCHES" \
 	"$V4L2REQ_BASE..$V4L2REQ_COMMIT"
-grep -v "  $f\$" "$TOP/ffmpeg.sha256" > "$OUT/patches.sha256"
+grep -v -e "  $f\$" -e '  patches/' "$TOP/ffmpeg.sha256" > "$OUT/patches.sha256"
 if ! (cd "$PATCHES" && sha256sum -- *.patch) | cmp -s - "$OUT/patches.sha256"; then
 	echo "build.sh: the exported patches differ from ffmpeg.sha256:" >&2
 	(cd "$PATCHES" && sha256sum -- *.patch) | diff "$OUT/patches.sha256" - >&2 || :
 	exit 1
 fi
 rm "$OUT/patches.sha256"
+# Beanjar's own patches, in patches/: each listed in ffmpeg.sha256, and nothing else there
+grep '  patches/' "$TOP/ffmpeg.sha256" > "$OUT/local.sha256"
+if ! (cd "$TOP" && sha256sum -- patches/*.patch) | cmp -s - "$OUT/local.sha256"; then
+	echo "build.sh: the patches in patches/ differ from ffmpeg.sha256:" >&2
+	(cd "$TOP" && sha256sum -- patches/*.patch) | diff "$OUT/local.sha256" - >&2 || :
+	exit 1
+fi
+rm "$OUT/local.sha256"
 SRC=$OUT/src
 rm -rf "$SRC" "$PREFIX"
 mkdir -p "$SRC"
@@ -108,6 +117,10 @@ tar -C "$SRC" -xJf "$DL/$f"
 S=$SRC/ffmpeg-$upstream
 for p in "$PATCHES"/*.patch; do
 	echo "applying $(basename "$p")"
+	patch -d "$S" -p1 --batch --forward --quiet --fuzz=0 < "$p"
+done
+for p in "$TOP"/patches/*.patch; do
+	echo "applying patches/$(basename "$p")"
 	patch -d "$S" -p1 --batch --forward --quiet --fuzz=0 < "$p"
 done
 # file dates clamped to the release tarball's, so equal sources give equal tarballs
@@ -230,6 +243,9 @@ rm -rf "$SHL"
 	echo "Patches:"
 	for p in "$PATCHES"/*.patch; do
 		echo " $(basename "$p") $(sha256sum < "$p" | cut -d' ' -f1)"
+	done
+	for p in "$TOP"/patches/*.patch; do
+		echo " patches/$(basename "$p") $(sha256sum < "$p" | cut -d' ' -f1)"
 	done
 	echo "Configure:"
 	echo " $configure_line"

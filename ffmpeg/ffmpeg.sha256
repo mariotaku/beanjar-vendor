@@ -13,3 +13,4 @@ be225051ddd096faea1f4ab413e864ae2c86a7c1feeb6b77b38cde4b5a6c769d  0010-avcodec-A
 a38a16138354f26d9afa5e4af84eb3afad98575148fd043b6fa25907d0f83982  0012-avcodec-Add-V4L2-Request-API-av1-hwaccel.patch
 5d8f705e091cc427e25824dd6e0f53bd55eda94cbb35f6a6fbc51ee7a2a3acde  0013-avutil-hwcontext_v4l2request-Add-support-for-AFBC_16.patch
 c27783b0d410136b08b816930a3548119ba897f72b868f9f687d2b7a4e36ec06  0014-avutil-hwcontext_v4l2request-Add-support-for-BROADCO.patch
+d39cc770a5c069bb2c0cb9c10dd55797328cd6c80b01e68e67fdf3222e3d5f42  patches/0015-avutil-hwcontext_v4l2request-Define-Raspberry-Pi-NV1.patch

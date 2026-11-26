@@ -24,7 +24,7 @@ process must not load both copies: everything in it that uses FFmpeg has to use 
 
 ## Version
 
-`<FFmpeg version>+beanjar<N>`, for example `7.1.5+beanjar1`, in `VERSION`: the FFmpeg release
+`<FFmpeg version>+beanjar<N>`, for example `7.1.5+beanjar2`, in `VERSION`: the FFmpeg release
 Debian 13 ships, and the revision of this build. Debian's `7:7.1.5-0+deb13u1` is that upstream
 release without source patches; its `orig.tar.xz` is byte-identical to ffmpeg.org's tarball. The
 upstream part selects the tarball, which `build.sh` downloads from `ffmpeg.org` and checks against
@@ -39,6 +39,15 @@ against `ffmpeg.sha256`. They add the `v4l2request` hardware device type, which 
 devices through libudev, hwaccels for MPEG-2, H.264, HEVC, VP8, VP9 and AV1, and the AFBC and
 SAND128 capture formats, and apply to 7.1.5 without fuzz. The hwaccels are Linux-generic and
 build on amd64 too, although x86 machines have no stateless V4L2 decoder hardware.
+
+Beanjar's own patches in `patches/` follow the series, each checked against `ffmpeg.sha256` too:
+
+- `0015`: defines the Raspberry Pi HEVC decoder's capture formats `NV12MT_COL128` (`Nc12`) and
+  `NV12MT_10_COL128` (`Nc30`), SAND128 with separate luma and chroma buffers, which only the
+  Raspberry Pi kernel headers define. Without them the series' SAND128 support compiles out
+  against Debian's headers, and `rpi-hevc-dec` on the Raspberry Pi 5 is rejected with no capture
+  format. The single-buffer `NC12` and `NC30` stay undefined: with those the driver reads the
+  slice bit size in its older meaning, which the hwaccel does not send.
 
 ## What is built
 

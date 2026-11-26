@@ -38,6 +38,13 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"
 SPDX-License-Identifier = "GPL-2.0-or-later"
 
+# The FFmpeg patches change FFmpeg's LGPL-licensed code and carry its licence.
+[[annotations]]
+path = "ffmpeg/patches/**.patch"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Mariotaku <git@mariotaku.me> and the Beanjar contributors"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
 # The neatvnc patches change neatvnc's ISC-licensed code and carry its licence.
 [[annotations]]
 path = "neatvnc/patches/**.patch"
