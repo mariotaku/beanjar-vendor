@@ -162,14 +162,15 @@ done
 if grep -E 'lib(av|sw|postproc)[a-z]*\.so' "$DIR/ldd.txt" | grep -v -q "=> $root/lib/"; then
 	die "an FFmpeg library resolves outside the tree"
 fi
-# what the libraries need besides each other: libc, libm, dav1d, VA-API, DRM and udev
+# what the libraries need besides each other: libc (and its loader), libm, dav1d, VA-API, DRM
+# and udev
 others=$(for l in "$root"/lib/lib*.so.*.*.*; do
 	readelf -d "$l" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'
 done | grep -v -E '^lib(avcodec|avutil|swresample)\.so' | sort -u | tr '\n' ' ')
 echo "needed: $others"
 for n in $others; do
 	case $n in
-	libc.so.*|libm.so.*|libdav1d.so.*|libva.so.*|libva-drm.so.*|libdrm.so.*|libudev.so.*) ;;
+	ld-linux*.so.*|libc.so.*|libm.so.*|libdav1d.so.*|libva.so.*|libva-drm.so.*|libdrm.so.*|libudev.so.*) ;;
 	*) die "the libraries need $n" ;;
 	esac
 done
